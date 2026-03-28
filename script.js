@@ -59,6 +59,7 @@ const SWIPE_THRESHOLD = 50;
 // ========================================
 
 document.addEventListener('DOMContentLoaded', async () => {
+    initTheme();
     loadData();
     await initSync();
     initializeEventListeners();
@@ -66,13 +67,147 @@ document.addEventListener('DOMContentLoaded', async () => {
     updateSubjectSelectors();
     initButtonSettings();
     initIncorrectModeButtons();
+    initDailyGoal();
     registerServiceWorker();
+    checkPlatformSupport();
 });
+
+// ========================================
+// ダークモード
+// ========================================
+
+function initTheme() {
+    const saved = localStorage.getItem('theme');
+    if (saved) {
+        document.documentElement.setAttribute('data-theme', saved);
+    }
+    updateThemeIcon();
+    const toggle = document.getElementById('theme-toggle');
+    if (toggle) toggle.addEventListener('click', toggleTheme);
+}
+
+function toggleTheme() {
+    const current = document.documentElement.getAttribute('data-theme');
+    let next;
+    if (current === 'dark') next = 'light';
+    else if (current === 'light') next = 'dark';
+    else {
+        // Auto mode: toggle to opposite of system preference
+        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        next = prefersDark ? 'light' : 'dark';
+    }
+    document.documentElement.setAttribute('data-theme', next);
+    localStorage.setItem('theme', next);
+    updateThemeIcon();
+}
+
+// ========================================
+// 日別学習目標
+// ========================================
+
+function initDailyGoal() {
+    const goal = parseInt(localStorage.getItem('dailyGoal') || '0');
+    const input = document.getElementById('daily-goal-input');
+    if (input) {
+        input.value = goal;
+        input.addEventListener('change', () => {
+            const val = Math.max(0, parseInt(input.value) || 0);
+            localStorage.setItem('dailyGoal', val.toString());
+            input.value = val;
+            updateDailyGoalDisplay();
+        });
+    }
+    updateDailyGoalDisplay();
+}
+
+function updateDailyGoalDisplay() {
+    const goal = parseInt(localStorage.getItem('dailyGoal') || '0');
+    const bar = document.getElementById('daily-goal-bar');
+    if (!bar) return;
+    if (goal <= 0) { bar.style.display = 'none'; return; }
+    bar.style.display = 'block';
+    const done = completedTodayCount;
+    const pct = Math.min(100, Math.round((done / goal) * 100));
+    document.getElementById('daily-goal-text').textContent = `目標: ${done}/${goal}問 (${pct}%)`;
+    document.getElementById('daily-goal-fill').style.width = pct + '%';
+    if (pct >= 100) {
+        document.getElementById('daily-goal-fill').classList.add('goal-achieved');
+    } else {
+        document.getElementById('daily-goal-fill').classList.remove('goal-achieved');
+    }
+}
+
+function updateThemeIcon() {
+    const toggle = document.getElementById('theme-toggle');
+    if (!toggle) return;
+    const theme = document.documentElement.getAttribute('data-theme');
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    const isDark = theme === 'dark' || (!theme && prefersDark);
+    toggle.textContent = isDark ? '☀️' : '🌙';
+}
 
 function registerServiceWorker() {
     if ('serviceWorker' in navigator) {
         navigator.serviceWorker.register('./sw.js').catch(() => {});
     }
+}
+
+// File System Access API非対応時（iOS Safari）はGoogle Drive同期を非表示
+function checkPlatformSupport() {
+    if (!window.showSaveFilePicker) {
+        const syncSection = document.getElementById('sync-section');
+        if (syncSection) syncSection.style.display = 'none';
+    }
+}
+
+// ========================================
+// JSONバックアップ（iOS対応）
+// ========================================
+
+function exportJSON() {
+    const json = JSON.stringify(theoryData, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const filename = `anki_master_backup_${getTodayString()}.json`;
+
+    if (navigator.share && navigator.canShare && navigator.canShare({ files: [new File([blob], filename)] })) {
+        navigator.share({
+            files: [new File([blob], filename, { type: 'application/json' })],
+            title: '暗記マスター バックアップ'
+        }).then(() => showToast('バックアップを共有しました', 'success')).catch(() => {});
+    } else {
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        showToast('バックアップをダウンロードしました', 'success');
+    }
+}
+
+function importJSON(file) {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        try {
+            const data = JSON.parse(e.target.result);
+            if (!data.subjects || !Array.isArray(data.subjects)) {
+                showToast('無効なバックアップファイルです', 'error');
+                return;
+            }
+            if (!confirm(`${data.subjects.length}科目のデータをインポートします。現在のデータは上書きされます。よろしいですか？`)) return;
+            theoryData = data;
+            saveData();
+            updateAllDisplays();
+            showToast('バックアップを復元しました', 'success');
+        } catch (err) {
+            showToast('ファイルの読み込みに失敗しました', 'error');
+        }
+    };
+    reader.readAsText(file, 'UTF-8');
+    document.getElementById('import-json-input').value = '';
 }
 
 // ========================================
@@ -174,7 +309,7 @@ function generateId() {
 
 function openSyncDB() {
     return new Promise((resolve, reject) => {
-        const req = indexedDB.open('taxTutorSync', 1);
+        const req = indexedDB.open('ankiMasterSync', 1);
         req.onupgradeneeded = () => req.result.createObjectStore('fileHandles');
         req.onsuccess = () => resolve(req.result);
         req.onerror = () => reject(req.error);
@@ -407,6 +542,7 @@ function initializeEventListeners() {
     });
 
     document.getElementById('filter-subject').addEventListener('change', () => updateAllTheoriesList());
+    document.getElementById('theory-search').addEventListener('input', () => updateAllTheoriesList());
 
     // カレンダー
     document.getElementById('prev-month').addEventListener('click', () => {
@@ -480,6 +616,128 @@ function initializeEventListeners() {
 
     // スワイプジェスチャー
     initSwipeGestures();
+
+    // キーボードショートカット
+    document.addEventListener('keydown', handleKeyboardShortcut);
+}
+
+function handleKeyboardShortcut(e) {
+    // テキスト入力中は無効
+    if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return;
+    // モーダルが開いている場合は無効
+    const modal = document.getElementById('card-modal');
+    if (modal && modal.style.display !== 'none' && modal.style.display !== '') return;
+
+    const isReviewTab = (currentDisplayMode === 'today-review' || currentDisplayMode === 'incorrect-review');
+
+    switch (e.key) {
+        case '?':
+            e.preventDefault();
+            toggleShortcutHelp();
+            return;
+        case 'Escape':
+            closeShortcutHelp();
+            return;
+        case ' ':
+            if (isReviewTab) {
+                e.preventDefault();
+                toggleAnswerVisibility();
+            }
+            break;
+        case 'ArrowLeft':
+            if (isReviewTab && currentCardIndex > 0) {
+                e.preventDefault();
+                navigateCard(-1);
+            }
+            break;
+        case 'ArrowRight':
+            if (isReviewTab && currentCardIndex < currentReviewList.length - 1) {
+                e.preventDefault();
+                navigateCard(1);
+            }
+            break;
+        case 'o': case 'O':
+            if (isReviewTab && currentReviewList.length > 0) {
+                e.preventDefault();
+                const newEval = upgradeEvaluation(currentReviewList[currentCardIndex].evaluation);
+                recordEvaluation(currentReviewList[currentCardIndex], newEval);
+            }
+            break;
+        case 'x': case 'X':
+            if (isReviewTab && currentReviewList.length > 0) {
+                e.preventDefault();
+                const theory = currentReviewList[currentCardIndex];
+                let newEval;
+                if (incorrectMode === 'strict') newEval = 'E';
+                else if (incorrectMode === 'gentle') newEval = theory.evaluation;
+                else newEval = downgradeEvaluation(theory.evaluation);
+                recordEvaluation(theory, newEval, incorrectMode === 'gentle');
+            }
+            break;
+        case 'z': case 'Z':
+            if (isReviewTab) {
+                e.preventDefault();
+                undoLastEvaluation();
+            }
+            break;
+        case '1': case '2': case '3': case '4': case '5':
+            if (isReviewTab && evalMode === 'detail' && currentReviewList.length > 0) {
+                e.preventDefault();
+                const evals = ['E', 'D', 'C', 'B', 'A'];
+                recordEvaluation(currentReviewList[currentCardIndex], evals[parseInt(e.key) - 1]);
+            }
+            break;
+    }
+}
+
+function navigateCard(direction) {
+    if (currentDisplayMode === 'incorrect-review') {
+        incorrectCardIndex = Math.max(0, Math.min(incorrectCardIndex + direction, todayIncorrectList.length - 1));
+        displayIncorrectReview();
+    } else {
+        currentCardIndex = Math.max(0, Math.min(currentCardIndex + direction, currentReviewList.length - 1));
+        isAnswerVisible = false;
+        cardAnimDirection = direction > 0 ? 'right' : 'left';
+        displayCurrentCard();
+    }
+}
+
+// ========================================
+// ショートカットヘルプ
+// ========================================
+
+function toggleShortcutHelp() {
+    let overlay = document.getElementById('shortcut-help');
+    if (overlay) {
+        overlay.remove();
+        return;
+    }
+    overlay = document.createElement('div');
+    overlay.id = 'shortcut-help';
+    overlay.className = 'shortcut-overlay';
+    overlay.innerHTML = `
+        <div class="shortcut-modal">
+            <h3>キーボードショートカット</h3>
+            <div class="shortcut-list">
+                <div class="shortcut-item"><kbd>Space</kbd><span>回答を表示/非表示</span></div>
+                <div class="shortcut-item"><kbd>←</kbd><span>前のカード</span></div>
+                <div class="shortcut-item"><kbd>→</kbd><span>次のカード</span></div>
+                <div class="shortcut-item"><kbd>O</kbd><span>正解</span></div>
+                <div class="shortcut-item"><kbd>X</kbd><span>不正解</span></div>
+                <div class="shortcut-item"><kbd>Z</kbd><span>元に戻す</span></div>
+                <div class="shortcut-item"><kbd>1-5</kbd><span>評価 E〜A（詳細モード時）</span></div>
+                <div class="shortcut-item"><kbd>?</kbd><span>このヘルプを表示</span></div>
+                <div class="shortcut-item"><kbd>Esc</kbd><span>閉じる</span></div>
+            </div>
+        </div>
+    `;
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+    document.body.appendChild(overlay);
+}
+
+function closeShortcutHelp() {
+    const overlay = document.getElementById('shortcut-help');
+    if (overlay) overlay.remove();
 }
 
 // ========================================
@@ -532,6 +790,7 @@ function switchTab(tabName) {
         case 'incorrect-review': displayIncorrectReview(); break;
         case 'all-theories': updateFilterSubjectSelect(); updateAllTheoriesList(); break;
         case 'calendar': updateCalendar(); break;
+        case 'statistics': updateStatistics(); break;
     }
 }
 
@@ -578,6 +837,9 @@ function updateDashboard(learnedCount, unlearnedCount, learnedReviewList) {
     const ringPct = document.getElementById('progress-ring-pct');
     if (ring) ring.setAttribute('stroke-dashoffset', offset);
     if (ringPct) ringPct.textContent = pct + '%';
+
+    // 目標進捗
+    updateDailyGoalDisplay();
 
     // 評価内訳バッジ
     const breakdown = document.getElementById('dashboard-eval-breakdown');
@@ -762,7 +1024,7 @@ function applySortMode(list, mode) {
 // カード表示と評価
 // ========================================
 
-function displayCurrentCard(containerId) {
+function displayCurrentCard(containerId = 'today-review-content') {
     const container = document.getElementById(containerId);
 
     isAnswerVisible = false;
@@ -979,9 +1241,45 @@ function recordEvaluation(theory, evaluation, gentleMode = false) {
         }
     }
 
+    // 学習履歴を記録
+    recordStudyLog(today, evaluation, prevEval);
+
     cardAnimDirection = 'right';
     saveData();
     updateAllDisplays();
+}
+
+// ========================================
+// 学習履歴の記録
+// ========================================
+
+function getStudyLog() {
+    const saved = localStorage.getItem('studyLog');
+    return saved ? JSON.parse(saved) : {};
+}
+
+function saveStudyLog(log) {
+    localStorage.setItem('studyLog', JSON.stringify(log));
+}
+
+function recordStudyLog(dateStr, newEval, prevEval) {
+    const log = getStudyLog();
+    if (!log[dateStr]) {
+        log[dateStr] = { total: 0, correct: 0, incorrect: 0 };
+    }
+    log[dateStr].total++;
+
+    // 評価が上がった or 維持 = 正解、下がった = 不正解
+    const evalOrder = ['E', 'D', 'C', 'B', 'A', 'S'];
+    const newIdx = evalOrder.indexOf(newEval);
+    const prevIdx = evalOrder.indexOf(prevEval);
+    if (newIdx >= prevIdx) {
+        log[dateStr].correct++;
+    } else {
+        log[dateStr].incorrect++;
+    }
+
+    saveStudyLog(log);
 }
 
 function undoLastEvaluation() {
@@ -1036,13 +1334,25 @@ function updateFilterSubjectSelect() {
 function updateAllTheoriesList() {
     const evalFilter = document.querySelector('.filter-btn[data-filter].active').dataset.filter;
     const subjectFilter = document.getElementById('filter-subject').value;
+    const searchQuery = (document.getElementById('theory-search')?.value || '').trim().toLowerCase();
     let theories = getAllTheories();
 
     if (evalFilter === 'unlearned') theories = theories.filter(t => !t.learned);
     else if (evalFilter !== 'all') theories = theories.filter(t => t.evaluation === evalFilter);
     if (subjectFilter) theories = theories.filter(t => t.subjectName === subjectFilter);
+    if (searchQuery) {
+        theories = theories.filter(t =>
+            t.questionText.toLowerCase().includes(searchQuery) ||
+            t.answerText.toLowerCase().includes(searchQuery)
+        );
+    }
 
     const container = document.getElementById('all-theories-list');
+    const countEl = document.getElementById('theory-count');
+    if (countEl) {
+        const allCount = getAllTheories().length;
+        countEl.textContent = theories.length === allCount ? `(${allCount}問)` : `(${theories.length}/${allCount}問)`;
+    }
 
     if (theories.length === 0) {
         container.innerHTML = `
@@ -1156,12 +1466,31 @@ function updateCalendar() {
     for (let i = 0; i < adjustedFirstDay; i++) {
         html += '<div class="calendar-day empty"></div>';
     }
+    // Calculate max review count for heat map scaling
+    const dailyCounts = [];
     for (let day = 1; day <= daysInMonth; day++) {
         const dateStr = formatDateISO(new Date(year, month, day));
-        const reviewCount = getTodayReviewList(dateStr).length;
+        dailyCounts.push({ dateStr, count: getTodayReviewList(dateStr).length });
+    }
+    const maxCount = Math.max(1, ...dailyCounts.map(d => d.count));
+
+    for (let day = 1; day <= daysInMonth; day++) {
+        const { dateStr, count: reviewCount } = dailyCounts[day - 1];
         const isToday = dateStr === getTodayString();
+        // Heat map: 0=none, 1-25%=light, 26-50%=medium, 51-75%=heavy, 76-100%=extreme
+        let heatLevel = '';
+        if (reviewCount > 0) {
+            const ratio = reviewCount / maxCount;
+            if (ratio <= 0.25) heatLevel = 'heat-light';
+            else if (ratio <= 0.5) heatLevel = 'heat-medium';
+            else if (ratio <= 0.75) heatLevel = 'heat-heavy';
+            else heatLevel = 'heat-extreme';
+        }
+        // Check if date is in past and had study log
+        const log = getStudyLog();
+        const wasStudied = log[dateStr] && log[dateStr].total > 0;
         html += `
-            <div class="calendar-day ${isToday ? 'today' : ''} ${reviewCount > 0 ? 'has-review' : ''}" onclick="showCalendarDetail('${dateStr}')">
+            <div class="calendar-day ${isToday ? 'today' : ''} ${heatLevel} ${wasStudied ? 'was-studied' : ''}" onclick="showCalendarDetail('${dateStr}')">
                 <div class="calendar-day-number">${day}</div>
                 ${reviewCount > 0 ? `<div class="calendar-day-count">${reviewCount}</div>` : ''}
             </div>
@@ -1817,8 +2146,17 @@ function toggleAnswerVisibility() {
     isAnswerVisible = !isAnswerVisible;
     const btn = document.getElementById('toggle-answer-btn');
     const answerSection = document.getElementById('answer-section-display');
-    if (isAnswerVisible) { btn.textContent = '🙈 非表示'; if (answerSection) answerSection.style.display = 'block'; }
-    else { btn.textContent = '👁️ 回答表示'; if (answerSection) answerSection.style.display = 'none'; }
+    if (isAnswerVisible) {
+        btn.textContent = '🙈 非表示';
+        if (answerSection) {
+            answerSection.style.display = 'block';
+            answerSection.classList.add('answer-reveal');
+            answerSection.addEventListener('animationend', () => answerSection.classList.remove('answer-reveal'), { once: true });
+        }
+    } else {
+        btn.textContent = '👁️ 回答表示';
+        if (answerSection) answerSection.style.display = 'none';
+    }
 }
 
 function toggleBtnSettingsPanel() {
@@ -1988,15 +2326,24 @@ function exportCSV() {
     const csvContent = rows.map(row => row.map(escapeCSVField).join(',')).join('\r\n');
     const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
     const filterLabel = selectedEvals.length === 5 ? 'all' : selectedEvals.join('');
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `anki_master_${filterLabel}_${getTodayString()}.csv`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-    showToast(`${rows.length - 1}問をエクスポートしました`, 'success');
+    const filename = `anki_master_${filterLabel}_${getTodayString()}.csv`;
+
+    // iOS Safari: try share API first, then fallback to download link
+    if (navigator.share && navigator.canShare && navigator.canShare({ files: [new File([blob], filename)] })) {
+        navigator.share({ files: [new File([blob], filename, { type: 'text/csv' })], title: filename })
+            .then(() => showToast(`${rows.length - 1}問をエクスポートしました`, 'success'))
+            .catch(() => {});
+    } else {
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        showToast(`${rows.length - 1}問をエクスポートしました`, 'success');
+    }
 }
 
 function parseCSV(text) {
@@ -2077,4 +2424,207 @@ function importCSV(file) {
         }
     };
     reader.readAsText(file, 'UTF-8');
+}
+
+// ========================================
+// 統計ダッシュボード
+// ========================================
+
+function updateStatistics() {
+    const log = getStudyLog();
+    const today = getTodayString();
+    const theories = getAllTheories();
+
+    // 過去30日の日付リスト
+    const last30 = [];
+    for (let i = 29; i >= 0; i--) {
+        last30.push(addDays(today, -i));
+    }
+
+    // --- サマリー ---
+    updateStatsStreak(log, today);
+    updateStatsTotals(log, last30);
+
+    // --- 日別学習量バーチャート ---
+    renderDailyChart(log, last30);
+
+    // --- 正答率推移ラインチャート ---
+    renderAccuracyChart(log, last30);
+
+    // --- 評価分布 ---
+    renderEvalDistribution(theories);
+
+    // --- 科目別定着率 ---
+    renderSubjectProgress();
+}
+
+function updateStatsStreak(log, today) {
+    let streak = 0;
+    let checkDate = today;
+    // 今日まだ学習していない場合は昨日から数える
+    if (!log[checkDate] || log[checkDate].total === 0) {
+        checkDate = addDays(today, -1);
+    }
+    while (log[checkDate] && log[checkDate].total > 0) {
+        streak++;
+        checkDate = addDays(checkDate, -1);
+    }
+    document.getElementById('stats-streak').textContent = streak;
+}
+
+function updateStatsTotals(log, last30) {
+    let totalReviews = 0;
+    let activeDays = 0;
+    Object.values(log).forEach(day => { totalReviews += day.total; });
+    last30.forEach(d => { if (log[d] && log[d].total > 0) activeDays++; });
+    const avg = activeDays > 0 ? Math.round(totalReviews / Object.keys(log).length) : 0;
+    document.getElementById('stats-total-reviews').textContent = totalReviews.toLocaleString();
+    document.getElementById('stats-avg-daily').textContent = avg;
+}
+
+function renderDailyChart(log, last30) {
+    const container = document.getElementById('stats-daily-chart');
+    const maxVal = Math.max(1, ...last30.map(d => (log[d] ? log[d].total : 0)));
+
+    let html = '<div class="bar-chart">';
+    last30.forEach((d, i) => {
+        const val = log[d] ? log[d].total : 0;
+        const height = Math.round((val / maxVal) * 100);
+        const dateObj = new Date(d);
+        const label = (dateObj.getMonth() + 1) + '/' + dateObj.getDate();
+        const showLabel = (i % 5 === 0 || i === 29);
+        html += `<div class="bar-col" title="${label}: ${val}問">
+            <div class="bar-value">${val > 0 ? val : ''}</div>
+            <div class="bar" style="height: ${height}%"></div>
+            <div class="bar-label">${showLabel ? label : ''}</div>
+        </div>`;
+    });
+    html += '</div>';
+    container.innerHTML = html;
+}
+
+function renderAccuracyChart(log, last30) {
+    const container = document.getElementById('stats-accuracy-chart');
+    const points = [];
+    last30.forEach(d => {
+        if (log[d] && log[d].total > 0) {
+            points.push({ date: d, rate: Math.round((log[d].correct / log[d].total) * 100) });
+        }
+    });
+
+    if (points.length === 0) {
+        container.innerHTML = '<p class="stats-empty">まだデータがありません。復習を始めると正答率が表示されます。</p>';
+        return;
+    }
+
+    // SVG line chart
+    const width = 600;
+    const height = 200;
+    const padding = { top: 20, right: 20, bottom: 30, left: 40 };
+    const chartW = width - padding.left - padding.right;
+    const chartH = height - padding.top - padding.bottom;
+
+    const xStep = points.length > 1 ? chartW / (points.length - 1) : chartW / 2;
+
+    let pathD = '';
+    let dots = '';
+    points.forEach((p, i) => {
+        const x = padding.left + (points.length > 1 ? i * xStep : chartW / 2);
+        const y = padding.top + chartH - (p.rate / 100) * chartH;
+        if (i === 0) pathD += `M ${x} ${y}`;
+        else pathD += ` L ${x} ${y}`;
+        dots += `<circle cx="${x}" cy="${y}" r="4" fill="var(--primary)" />`;
+    });
+
+    // Grid lines
+    let grid = '';
+    [0, 25, 50, 75, 100].forEach(v => {
+        const y = padding.top + chartH - (v / 100) * chartH;
+        grid += `<line x1="${padding.left}" y1="${y}" x2="${width - padding.right}" y2="${y}" stroke="#e0e0e0" stroke-width="1"/>`;
+        grid += `<text x="${padding.left - 5}" y="${y + 4}" text-anchor="end" font-size="11" fill="#888">${v}%</text>`;
+    });
+
+    container.innerHTML = `<svg viewBox="0 0 ${width} ${height}" class="accuracy-svg">
+        ${grid}
+        <path d="${pathD}" fill="none" stroke="var(--primary)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+        ${dots}
+    </svg>`;
+}
+
+function renderEvalDistribution(theories) {
+    const container = document.getElementById('stats-eval-distribution');
+    const learnedTheories = theories.filter(t => t.learned);
+    const counts = { S: 0, A: 0, B: 0, C: 0, D: 0, E: 0 };
+    learnedTheories.forEach(t => {
+        if (counts[t.evaluation] !== undefined) counts[t.evaluation]++;
+    });
+    const total = learnedTheories.length || 1;
+    const unlearnedCount = theories.length - learnedTheories.length;
+
+    const colors = {
+        S: 'var(--eval-s, #FFD700)', A: 'var(--eval-a, #4CAF50)', B: 'var(--eval-b, #2196F3)',
+        C: 'var(--eval-c, #FF9800)', D: 'var(--eval-d, #f44336)', E: 'var(--eval-e, #9E9E9E)'
+    };
+
+    let html = '<div class="eval-dist-bars">';
+    ['S', 'A', 'B', 'C', 'D', 'E'].forEach(eval_ => {
+        const pct = Math.round((counts[eval_] / total) * 100);
+        html += `<div class="eval-dist-row">
+            <span class="eval-dist-label">${eval_}</span>
+            <div class="eval-dist-bar-bg">
+                <div class="eval-dist-bar-fill" style="width: ${pct}%; background: ${colors[eval_]}"></div>
+            </div>
+            <span class="eval-dist-count">${counts[eval_]}問 (${pct}%)</span>
+        </div>`;
+    });
+    if (unlearnedCount > 0) {
+        html += `<div class="eval-dist-row">
+            <span class="eval-dist-label">未</span>
+            <div class="eval-dist-bar-bg">
+                <div class="eval-dist-bar-fill" style="width: ${Math.round((unlearnedCount / theories.length) * 100)}%; background: #ddd"></div>
+            </div>
+            <span class="eval-dist-count">${unlearnedCount}問</span>
+        </div>`;
+    }
+    html += '</div>';
+    container.innerHTML = html;
+}
+
+function renderSubjectProgress() {
+    const container = document.getElementById('stats-subject-progress');
+    let html = '';
+
+    theoryData.subjects.forEach(subject => {
+        if (!subject.active) return;
+        let total = 0, mastered = 0, learning = 0;
+        subject.books.forEach(book => {
+            book.chapters.forEach(chapter => {
+                chapter.theories.forEach(theory => {
+                    total++;
+                    if (['S', 'A'].includes(theory.evaluation) && theory.learned) mastered++;
+                    else if (theory.learned) learning++;
+                });
+            });
+        });
+        const masteredPct = total > 0 ? Math.round((mastered / total) * 100) : 0;
+        const learningPct = total > 0 ? Math.round((learning / total) * 100) : 0;
+
+        html += `<div class="subject-progress-row">
+            <div class="subject-progress-header">
+                <span class="subject-progress-name">${subject.name}</span>
+                <span class="subject-progress-detail">${mastered + learning}/${total}問 学習済み</span>
+            </div>
+            <div class="subject-progress-bar">
+                <div class="subject-progress-mastered" style="width: ${masteredPct}%" title="定着 (S/A): ${mastered}問"></div>
+                <div class="subject-progress-learning" style="width: ${learningPct}%" title="学習中 (B-E): ${learning}問"></div>
+            </div>
+            <div class="subject-progress-labels">
+                <span>定着 ${masteredPct}%</span>
+                <span>学習中 ${learningPct}%</span>
+            </div>
+        </div>`;
+    });
+
+    if (!html) html = '<p class="stats-empty">アクティブな科目がありません。</p>';
+    container.innerHTML = html;
 }

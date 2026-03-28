@@ -1,4 +1,4 @@
-const CACHE_NAME = 'anki-master-v1';
+const CACHE_NAME = 'anki-master-v3';
 const PRECACHE_ASSETS = [
   './index.html',
   './script.js',
