@@ -345,8 +345,41 @@
                 <div class="form-section">
                     <h3 style="margin-bottom: 20px; color: var(--primary);">💾 データのバックアップ</h3>
 
-                    <div id="sync-section" class="backup-section" style="border: 2px solid var(--primary); background: #f0f8ff; padding: 16px; border-radius: var(--radius-md);">
-                        <h4 style="color: var(--primary);">☁️ Google Drive 同期</h4>
+                    <!-- クラウド同期 -->
+                    <div class="backup-section" style="border: 2px solid var(--eval-a); background: var(--question-bg); padding: 16px; border-radius: var(--radius-md); margin-bottom: 16px;">
+                        <h4 style="color: var(--eval-a);">🌐 クラウド同期</h4>
+                        <p style="margin-bottom: 12px; line-height: 1.6; font-size: 0.9rem;">
+                            PC・iPhone間でデータを自動同期します。全デバイスで同じデータを使えます。
+                        </p>
+                        <div id="cloud-sync-status" style="margin-bottom: 12px; padding: 10px; background: var(--card-bg); border-radius: 6px; border: 1px solid var(--border-color);">
+                            <span style="color: #95a5a6;">● 未設定</span>
+                        </div>
+                        <div id="cloud-sync-setup" style="margin-bottom: 12px;">
+                            <div class="form-row" style="margin-bottom: 8px;">
+                                <label style="font-size: 0.85rem;">サーバーURL:</label>
+                                <input type="url" id="cloud-sync-url" class="form-input" placeholder="https://example.com/anki-sync/sync_api.php">
+                            </div>
+                            <div class="form-row" style="margin-bottom: 8px;">
+                                <label style="font-size: 0.85rem;">パスワード:</label>
+                                <input type="password" id="cloud-sync-password" class="form-input" placeholder="同期パスワード">
+                            </div>
+                            <div class="form-row" style="margin-bottom: 8px;">
+                                <label style="font-size: 0.85rem;">デバイス名:</label>
+                                <input type="text" id="cloud-sync-device" class="form-input" placeholder="例: iPhone / ノートPC / デスクトップ">
+                            </div>
+                        </div>
+                        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                            <button class="btn btn-success" style="flex: 1;" onclick="cloudSyncSave()">💾 設定を保存</button>
+                            <button class="btn btn-primary" style="flex: 1;" onclick="cloudSyncPush()">⬆️ 送信</button>
+                            <button class="btn btn-primary" style="flex: 1;" onclick="cloudSyncPull()">⬇️ 受信</button>
+                        </div>
+                        <div style="margin-top: 8px; display: flex; gap: 8px;">
+                            <button class="btn btn-secondary btn-small" style="flex: 1;" onclick="cloudSyncDisconnect()">🔌 設定解除</button>
+                        </div>
+                    </div>
+
+                    <div id="sync-section" class="backup-section" style="border: 2px solid var(--primary); background: var(--question-bg); padding: 16px; border-radius: var(--radius-md);">
+                        <h4 style="color: var(--primary);">☁️ Google Drive 同期（PCのみ）</h4>
                         <p style="margin-bottom: 12px; line-height: 1.6; font-size: 0.9rem;">Google Driveの同期フォルダにJSONファイルを保存し、複数のPCでデータを共有できます。</p>
                         <div id="sync-status" style="margin-bottom: 12px; padding: 10px; background: var(--card-bg); border-radius: 6px; border: 1px solid var(--border-color);">
                             <span style="color: #95a5a6;">● 未設定</span>

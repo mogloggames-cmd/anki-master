@@ -70,6 +70,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     initDailyGoal();
     registerServiceWorker();
     checkPlatformSupport();
+    initCloudSync();
 });
 
 // ========================================
@@ -158,6 +159,169 @@ function checkPlatformSupport() {
         const syncSection = document.getElementById('sync-section');
         if (syncSection) syncSection.style.display = 'none';
     }
+}
+
+// ========================================
+// クラウド同期
+// ========================================
+
+function getCloudSyncConfig() {
+    const saved = localStorage.getItem('cloudSyncConfig');
+    return saved ? JSON.parse(saved) : null;
+}
+
+function initCloudSync() {
+    const config = getCloudSyncConfig();
+    if (config) {
+        document.getElementById('cloud-sync-url').value = config.url || '';
+        document.getElementById('cloud-sync-password').value = config.password || '';
+        document.getElementById('cloud-sync-device').value = config.deviceName || '';
+        updateCloudSyncStatus();
+    }
+}
+
+function cloudSyncSave() {
+    const url = document.getElementById('cloud-sync-url').value.trim();
+    const password = document.getElementById('cloud-sync-password').value.trim();
+    const deviceName = document.getElementById('cloud-sync-device').value.trim() || 'デバイス';
+
+    if (!url) { showToast('サーバーURLを入力してください', 'warning'); return; }
+    if (!password) { showToast('パスワードを入力してください', 'warning'); return; }
+
+    localStorage.setItem('cloudSyncConfig', JSON.stringify({ url, password, deviceName }));
+    showToast('同期設定を保存しました', 'success');
+    updateCloudSyncStatus();
+}
+
+function cloudSyncDisconnect() {
+    if (!confirm('クラウド同期の設定を解除しますか？')) return;
+    localStorage.removeItem('cloudSyncConfig');
+    localStorage.removeItem('lastCloudSync');
+    document.getElementById('cloud-sync-url').value = '';
+    document.getElementById('cloud-sync-password').value = '';
+    document.getElementById('cloud-sync-device').value = '';
+    updateCloudSyncStatusText('● 未設定', '#95a5a6');
+    showToast('同期設定を解除しました', 'info');
+}
+
+async function cloudSyncPush() {
+    const config = getCloudSyncConfig();
+    if (!config) { showToast('先に同期設定を保存してください', 'warning'); return; }
+
+    updateCloudSyncStatusText('● 送信中...', '#f39c12');
+    try {
+        const response = await fetch(config.url + '?action=push', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Sync-Key': config.password },
+            body: JSON.stringify({ data: theoryData, deviceName: config.deviceName })
+        });
+
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.error || 'サーバーエラー');
+        }
+
+        const result = await response.json();
+        localStorage.setItem('lastCloudSync', new Date().toISOString());
+        updateCloudSyncStatus();
+        showToast(`データを送信しました（${result.theoryCount || 0}問）`, 'success');
+    } catch (err) {
+        updateCloudSyncStatusText('● 送信エラー', '#e74c3c', err.message);
+        showToast('送信に失敗しました: ' + err.message, 'error');
+    }
+}
+
+async function cloudSyncPull() {
+    const config = getCloudSyncConfig();
+    if (!config) { showToast('先に同期設定を保存してください', 'warning'); return; }
+
+    updateCloudSyncStatusText('● 受信中...', '#f39c12');
+    try {
+        const response = await fetch(config.url + '?action=pull', {
+            method: 'GET',
+            headers: { 'X-Sync-Key': config.password }
+        });
+
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.error || 'サーバーエラー');
+        }
+
+        const result = await response.json();
+        if (!result.data) {
+            showToast('サーバーにデータがまだありません。先に「送信」してください', 'warning');
+            updateCloudSyncStatus();
+            return;
+        }
+
+        const serverCount = countAllTheories(result.data);
+        const localCount = getAllTheories().length;
+
+        if (!confirm(`サーバーのデータ（${serverCount}問）で上書きします。\n現在のデータ（${localCount}問）は置き換えられます。\n\n最終更新: ${result.deviceName || '不明'}\n${result.lastModified ? new Date(result.lastModified).toLocaleString('ja-JP') : ''}\n\nよろしいですか？`)) {
+            updateCloudSyncStatus();
+            return;
+        }
+
+        theoryData = result.data;
+        saveData();
+        updateAllDisplays();
+        localStorage.setItem('lastCloudSync', new Date().toISOString());
+        updateCloudSyncStatus();
+        showToast(`データを受信しました（${serverCount}問）`, 'success');
+    } catch (err) {
+        updateCloudSyncStatusText('● 受信エラー', '#e74c3c', err.message);
+        showToast('受信に失敗しました: ' + err.message, 'error');
+    }
+}
+
+function countAllTheories(data) {
+    let count = 0;
+    if (data && data.subjects) {
+        data.subjects.forEach(s => s.books && s.books.forEach(b => b.chapters && b.chapters.forEach(c => {
+            if (c.theories) count += c.theories.length;
+        })));
+    }
+    return count;
+}
+
+async function updateCloudSyncStatus() {
+    const config = getCloudSyncConfig();
+    if (!config) {
+        updateCloudSyncStatusText('● 未設定', '#95a5a6');
+        return;
+    }
+
+    const lastSync = localStorage.getItem('lastCloudSync');
+    let statusHTML = '<span style="color: #27ae60;">● 接続済み</span>';
+    statusHTML += '<br><small style="color: var(--text-light);">デバイス: ' + config.deviceName + '</small>';
+    if (lastSync) {
+        statusHTML += '<br><small style="color: var(--text-light);">最終同期: ' + new Date(lastSync).toLocaleString('ja-JP') + '</small>';
+    }
+
+    // サーバー情報を取得
+    try {
+        const response = await fetch(config.url + '?action=info', {
+            method: 'GET',
+            headers: { 'X-Sync-Key': config.password }
+        });
+        if (response.ok) {
+            const info = await response.json();
+            if (info.lastModified) {
+                statusHTML += '<br><small style="color: var(--text-light);">サーバー: ' +
+                    new Date(info.lastModified).toLocaleString('ja-JP') +
+                    ' (' + (info.deviceName || '不明') + ', ' + (info.theoryCount || 0) + '問)</small>';
+            }
+        }
+    } catch (e) { /* ignore network errors for status check */ }
+
+    document.getElementById('cloud-sync-status').innerHTML = statusHTML;
+}
+
+function updateCloudSyncStatusText(text, color, detail) {
+    const el = document.getElementById('cloud-sync-status');
+    if (!el) return;
+    el.innerHTML = '<span style="color: ' + color + ';">' + text + '</span>' +
+        (detail ? '<br><small style="color: var(--text-light);">' + detail + '</small>' : '');
 }
 
 // ========================================
