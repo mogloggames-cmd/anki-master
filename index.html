@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#1e3a5f">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>暗記マスター - フラッシュカード学習アプリ</title>
+    <link rel="manifest" href="manifest.json">
+    <link rel="apple-touch-icon" href="tax_tutor_icon.png">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="app-container">
+        <header class="app-header">
+            <h1>暗記マスター</h1>
+            <p class="subtitle">フラッシュカード学習アプリ</p>
+        </header>
+
+        <nav class="tab-nav">
+            <button class="tab-button active" data-tab="today-review">
+                <span class="tab-icon">📅</span>
+                <span class="tab-label">今日の復習</span>
+            </button>
+            <button class="tab-button" data-tab="calendar">
+                <span class="tab-icon">📊</span>
+                <span class="tab-label">負荷予測</span>
+            </button>
+            <button class="tab-button" data-tab="incorrect-review">
+                <span class="tab-icon">❌</span>
+                <span class="tab-label">不正解</span>
+            </button>
+            <button class="tab-button" data-tab="all-theories">
+                <span class="tab-icon">📋</span>
+                <span class="tab-label">一覧</span>
+            </button>
+            <button class="tab-button" data-tab="management">
+                <span class="tab-icon">⚙️</span>
+                <span class="tab-label">設定</span>
+            </button>
+        </nav>
+
+        <!-- タブ1：今日の復習 -->
+        <div class="tab-content active" id="today-review">
+            <div class="dashboard">
+                <div class="dashboard-summary">
+                    <div class="dashboard-stat-card">
+                        <div class="stat-number remaining" id="review-total">0</div>
+                        <div class="stat-label">残り</div>
+                    </div>
+                    <div class="dashboard-stat-card">
+                        <div class="stat-number completed" id="review-completed">0</div>
+                        <div class="stat-label">完了</div>
+                    </div>
+                    <div class="dashboard-stat-card progress-ring-container">
+                        <svg width="64" height="64" viewBox="0 0 64 64">
+                            <circle class="progress-ring-bg" cx="32" cy="32" r="26"></circle>
+                            <circle class="progress-ring-fill" id="progress-ring" cx="32" cy="32" r="26"
+                                stroke-dasharray="163.36" stroke-dashoffset="163.36"></circle>
+                            <text class="progress-ring-text" x="32" y="32" text-anchor="middle" dominant-baseline="central"
+                                transform="rotate(90 32 32)" id="progress-ring-pct">0%</text>
+                        </svg>
+                    </div>
+                </div>
+                <div class="dashboard-eval-breakdown" id="dashboard-eval-breakdown"></div>
+                <div class="subject-chips" id="subject-chips"></div>
+                <div class="calendar-strip" id="calendar-strip"></div>
+            </div>
+
+            <div class="review-progress">
+                <span class="review-progress-text" id="review-progress-text"></span>
+                <div class="review-progress-track">
+                    <div class="review-progress-bar" id="review-progress-bar"></div>
+                </div>
+            </div>
+
+            <div class="review-controls">
+                <div style="position: relative; flex: 1;">
+                    <button id="btn-settings-toggle" class="btn btn-secondary" style="width: 100%; padding: 8px 4px; font-size: 0.8rem;">⚙️ 設定</button>
+                    <div id="btn-settings-panel" class="settings-panel">
+                        <div class="settings-group">
+                            <label>評価モード</label>
+                            <div class="btn-row">
+                                <button id="eval-mode-simple-btn" class="btn btn-small btn-primary" onclick="setEvalMode('simple')">正誤</button>
+                                <button id="eval-mode-detail-btn" class="btn btn-small btn-secondary" onclick="setEvalMode('detail')">A~E</button>
+                            </div>
+                        </div>
+                        <div class="settings-group">
+                            <label>ボタンサイズ</label>
+                            <div class="btn-row">
+                                <button id="btn-size-small-btn" class="btn btn-small btn-primary" onclick="setBtnSize('small')">小</button>
+                                <button id="btn-size-large-btn" class="btn btn-small btn-secondary" onclick="setBtnSize('large')">大</button>
+                            </div>
+                        </div>
+                        <div class="settings-group">
+                            <label>不正解モード</label>
+                            <div class="btn-row">
+                                <button id="incorrect-mode-strict" class="btn btn-small btn-secondary" onclick="setIncorrectMode('strict')">ストイック</button>
+                                <button id="incorrect-mode-normal" class="btn btn-small btn-primary" onclick="setIncorrectMode('normal')">ノーマル</button>
+                                <button id="incorrect-mode-gentle" class="btn btn-small btn-secondary" onclick="setIncorrectMode('gentle')">やさしい</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <button id="toggle-random-btn" class="btn btn-secondary">🔀 ランダム</button>
+                <button id="toggle-answer-btn" class="btn btn-primary">👁️ 回答表示</button>
+                <button id="undo-eval-btn" class="btn btn-secondary" disabled>↩️ 戻る</button>
+            </div>
+
+            <div id="today-review-content" class="card-display-area"></div>
+        </div>
+
+        <!-- タブ2：負荷予測カレンダー -->
+        <div class="tab-content" id="calendar">
+            <h2>負荷予測カレンダー</h2>
+            <div class="calendar-controls">
+                <button id="prev-month" class="calendar-nav-btn">◀ 前月</button>
+                <h3 id="calendar-month" class="calendar-title">2026年1月</h3>
+                <button id="next-month" class="calendar-nav-btn">次月 ▶</button>
+            </div>
+            <div id="calendar-grid" class="calendar-grid"></div>
+            <div id="calendar-detail" class="calendar-detail" style="display:none;"></div>
+        </div>
+
+        <!-- タブ3：今日の不正解 -->
+        <div class="tab-content" id="incorrect-review">
+            <div class="review-header">
+                <h2>今日の不正解</h2>
+                <div class="review-stats">
+                    <span class="stat-badge stat-total">不正解: <span id="incorrect-total">0</span>問</span>
+                </div>
+            </div>
+            <p style="color: var(--text-light); margin-bottom: 15px; font-size: 0.9rem;">
+                今日の復習で評価が上がらなかった問題を再表示します。夜の復習にお使いください。
+            </p>
+            <div id="incorrect-review-content" class="card-display-area"></div>
+        </div>
+
+        <!-- タブ4：全理論一覧 -->
+        <div class="tab-content" id="all-theories">
+            <h2>全理論一覧</h2>
+            <div class="filter-area">
+                <div class="filter-row">
+                    <label>評価絞り込み:</label>
+                    <div class="filter-buttons">
+                        <button class="filter-btn active" data-filter="all">すべて</button>
+                        <button class="filter-btn" data-filter="unlearned">未習</button>
+                        <button class="filter-btn" data-filter="E">E</button>
+                        <button class="filter-btn" data-filter="D">D</button>
+                        <button class="filter-btn" data-filter="C">C</button>
+                        <button class="filter-btn" data-filter="B">B</button>
+                        <button class="filter-btn" data-filter="A">A</button>
+                    </div>
+                </div>
+                <div class="filter-row">
+                    <label>科目:</label>
+                    <select id="filter-subject" class="form-select">
+                        <option value="">すべて</option>
+                    </select>
+                </div>
+            </div>
+            <div id="all-theories-list" class="theory-list"></div>
+        </div>
+
+        <!-- タブ5：設定 -->
+        <div class="tab-content" id="management">
+            <h2>設定</h2>
+            <div class="mode-selector">
+                <button class="mode-btn active" data-mode="individual">個別登録</button>
+                <button class="mode-btn" data-mode="bulk">一括登録</button>
+                <button class="mode-btn" data-mode="structure">教材構造</button>
+                <button class="mode-btn" data-mode="backup">バックアップ</button>
+            </div>
+
+            <!-- 個別登録 -->
+            <div id="individual-mode" class="management-mode">
+                <div class="form-section">
+                    <div class="form-row">
+                        <label>科目名:</label>
+                        <select id="subject-select" class="form-select"><option value="">-- 科目を選択 --</option></select>
+                        <input type="text" id="subject-name" class="form-input" style="display:none;" placeholder="新しい科目名を入力">
+                    </div>
+                    <div class="form-row">
+                        <label>問題集名:</label>
+                        <select id="book-select" class="form-select" disabled><option value="">-- 問題集を選択 --</option></select>
+                        <input type="text" id="book-name" class="form-input" style="display:none;" placeholder="新しい問題集名を入力">
+                    </div>
+                    <div class="form-row">
+                        <label>単元名:</label>
+                        <select id="chapter-select" class="form-select" disabled><option value="">-- 単元を選択 --</option></select>
+                        <input type="text" id="chapter-name" class="form-input" style="display:none;" placeholder="新しい単元名を入力">
+                    </div>
+                    <div class="form-row">
+                        <label>問題文:</label>
+                        <textarea id="question-text" class="form-textarea" rows="4" placeholder="問題文を入力（改行OK）"></textarea>
+                    </div>
+                    <div class="form-row">
+                        <label>解答:</label>
+                        <textarea id="answer-text" class="form-textarea" rows="5" placeholder="解答を入力（改行OK）"></textarea>
+                    </div>
+                    <div class="form-row" style="margin-bottom: 15px;">
+                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                            <input type="checkbox" id="register-as-learned">
+                            <span>既習として登録（すぐに復習対象にする）</span>
+                        </label>
+                    </div>
+                    <div class="form-actions">
+                        <button id="add-and-continue" class="btn btn-primary">➕ 追加して続ける</button>
+                        <button id="add-and-finish" class="btn btn-success">✅ 追加して完了</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 一括登録 -->
+            <div id="bulk-mode" class="management-mode" style="display:none;">
+                <div class="form-section">
+                    <div class="form-row">
+                        <label>科目名:</label>
+                        <select id="bulk-subject-select" class="form-select"><option value="">-- 科目を選択 --</option></select>
+                        <input type="text" id="bulk-subject-name" class="form-input" style="display:none;" placeholder="新しい科目名を入力">
+                    </div>
+                    <div class="form-row">
+                        <label>問題集名:</label>
+                        <select id="bulk-book-select" class="form-select" disabled><option value="">-- 問題集を選択 --</option></select>
+                        <input type="text" id="bulk-book-name" class="form-input" style="display:none;" placeholder="新しい問題集名を入力">
+                    </div>
+                    <div class="form-row">
+                        <label>単元名:</label>
+                        <select id="bulk-chapter-select" class="form-select" disabled><option value="">-- 単元を選択 --</option></select>
+                        <input type="text" id="bulk-chapter-name" class="form-input" style="display:none;" placeholder="新しい単元名を入力">
+                    </div>
+                    <div class="guide-box">
+                        <h4>📋 一括登録の入力形式</h4>
+                        <p><strong>推奨：問題文と解答の区切りに「===」を使用</strong></p>
+                        <div style="background: #f8f9fa; padding: 12px; border-radius: 5px; margin: 8px 0; font-family: monospace; white-space: pre-wrap; font-size: 0.85rem;">問題文（改行自由）
+===
+解答（改行自由）
+---
+次の問題文
+===
+次の解答</div>
+                        <p style="background: #e3f2fd; padding: 8px; border-radius: 5px; margin: 8px 0; font-size: 0.85rem;">
+                            ✅ 問題文と解答：<strong style="color: #e74c3c;">===</strong>　✅ 問題と問題：<strong style="color: #3498db;">---</strong>
+                        </p>
+                    </div>
+                    <div class="form-row">
+                        <label>テキスト入力:</label>
+                        <textarea id="bulk-input" class="form-textarea" rows="12" placeholder="問題文&#10;===&#10;解答&#10;---&#10;次の問題文&#10;===&#10;次の解答"></textarea>
+                    </div>
+                    <div class="form-row" style="margin-bottom: 15px;">
+                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                            <input type="checkbox" id="bulk-register-as-learned">
+                            <span>既習として登録</span>
+                        </label>
+                    </div>
+                    <div class="form-actions">
+                        <button id="bulk-register" class="btn btn-primary">📝 一括登録する</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 教材構造管理 -->
+            <div id="structure-mode" class="management-mode" style="display:none;">
+                <div class="form-section">
+                    <h3 style="margin-bottom: 20px; color: var(--primary);">📚 教材構造の管理</h3>
+                    <div id="breadcrumb" style="margin-bottom: 16px; padding: 10px; background: white; border-radius: var(--radius-sm); font-size: 0.9rem;">
+                        <span style="color: var(--text-light);">📂</span> <span id="breadcrumb-path">トップ</span>
+                    </div>
+                    <div id="structure-list" style="min-height: 200px;"></div>
+                </div>
+            </div>
+
+            <!-- バックアップ -->
+            <div id="backup-mode" class="management-mode" style="display:none;">
+                <div class="form-section">
+                    <h3 style="margin-bottom: 20px; color: var(--primary);">💾 データのバックアップ</h3>
+
+                    <div class="backup-section" style="border: 2px solid var(--primary); background: #f0f8ff; padding: 16px; border-radius: var(--radius-md);">
+                        <h4 style="color: var(--primary);">☁️ Google Drive 同期</h4>
+                        <p style="margin-bottom: 12px; line-height: 1.6; font-size: 0.9rem;">Google Driveの同期フォルダにJSONファイルを保存し、複数のPCでデータを共有できます。</p>
+                        <div id="sync-status" style="margin-bottom: 12px; padding: 10px; background: white; border-radius: 6px; border: 1px solid var(--border-color);">
+                            <span style="color: #95a5a6;">● 未設定</span>
+                        </div>
+                        <div style="display: flex; gap: 10px;">
+                            <button id="sync-setup-btn" class="btn btn-primary" style="flex: 1;">📁 同期ファイルを設定</button>
+                            <button id="sync-disconnect-btn" class="btn btn-secondary" style="display: none;">🔌 解除</button>
+                        </div>
+                    </div>
+
+                    <hr style="margin: 24px 0; border: none; border-top: 1px solid var(--border-color);">
+
+                    <div class="backup-section">
+                        <h4 style="color: var(--eval-a);">📊 CSVエクスポート</h4>
+                        <div style="background: #f0f4ff; border: 2px solid var(--primary); padding: 12px; border-radius: var(--radius-sm); margin: 12px 0;">
+                            <strong style="display: block; margin-bottom: 8px; font-size: 0.85rem;">エクスポートする評価:</strong>
+                            <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                                <label style="display: flex; align-items: center; gap: 4px; cursor: pointer;">
+                                    <input type="checkbox" class="export-eval-filter" value="E" checked> <span class="eval-badge eval-e" style="font-size: 0.75rem;">E</span>
+                                </label>
+                                <label style="display: flex; align-items: center; gap: 4px; cursor: pointer;">
+                                    <input type="checkbox" class="export-eval-filter" value="D" checked> <span class="eval-badge eval-d" style="font-size: 0.75rem;">D</span>
+                                </label>
+                                <label style="display: flex; align-items: center; gap: 4px; cursor: pointer;">
+                                    <input type="checkbox" class="export-eval-filter" value="C" checked> <span class="eval-badge eval-c" style="font-size: 0.75rem;">C</span>
+                                </label>
+                                <label style="display: flex; align-items: center; gap: 4px; cursor: pointer;">
+                                    <input type="checkbox" class="export-eval-filter" value="B" checked> <span class="eval-badge eval-b" style="font-size: 0.75rem;">B</span>
+                                </label>
+                                <label style="display: flex; align-items: center; gap: 4px; cursor: pointer;">
+                                    <input type="checkbox" class="export-eval-filter" value="A" checked> <span class="eval-badge eval-a" style="font-size: 0.75rem;">A</span>
+                                </label>
+                            </div>
+                            <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+                                <button class="btn btn-small btn-secondary" onclick="setExportFilter(['E'])">Eのみ</button>
+                                <button class="btn btn-small btn-secondary" onclick="setExportFilter(['E','D'])">E・D</button>
+                                <button class="btn btn-small btn-secondary" onclick="setExportFilter(['E','D','C','B','A'])">すべて</button>
+                            </div>
+                            <div id="export-filter-count" style="margin-top: 8px; font-size: 0.85rem; color: var(--text-light);"></div>
+                        </div>
+                        <button id="export-csv-btn" class="btn btn-success" style="width: 100%;">📊 CSVエクスポート</button>
+                    </div>
+
+                    <hr style="margin: 24px 0; border: none; border-top: 1px solid var(--border-color);">
+
+                    <div class="backup-section">
+                        <h4 style="color: var(--eval-b);">📂 CSVインポート</h4>
+                        <div class="import-options" style="margin: 12px 0;">
+                            <label style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+                                <input type="radio" name="csv-import-mode" value="merge" checked>
+                                <span><strong>追加</strong> <small style="color: var(--text-light);">（現在のデータに追加）</small></span>
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 8px;">
+                                <input type="radio" name="csv-import-mode" value="replace">
+                                <span><strong>完全置き換え</strong> <small style="color: var(--text-light);">（既存データを削除）</small></span>
+                            </label>
+                        </div>
+                        <input type="file" id="import-csv-input" accept=".csv" style="display: none;">
+                        <button id="import-csv-btn" class="btn btn-warning" style="width: 100%;">📂 CSVインポート</button>
+                    </div>
+
+                    <hr style="margin: 24px 0; border: none; border-top: 1px solid var(--border-color);">
+
+                    <div class="backup-section">
+                        <h4 style="color: var(--eval-c);">🔄 全評価リセット</h4>
+                        <button id="reset-all-evaluations-btn" class="btn btn-danger" style="width: 100%;">🔄 全評価をEにリセット</button>
+                    </div>
+
+                    <hr style="margin: 16px 0; border: none; border-top: 1px solid var(--border-color);">
+
+                    <div class="backup-section">
+                        <button id="bulk-unlearn-e-btn" class="btn btn-secondary" style="width: 100%;">🆕 E評価を一括で未習にする</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- モーダル -->
+    <div id="card-modal" class="modal" style="display:none;">
+        <div class="modal-content">
+            <span class="modal-close">&times;</span>
+            <div id="modal-card-content"></div>
+        </div>
+    </div>
+
+    <div id="edit-modal" class="modal" style="display:none;">
+        <div class="modal-content">
+            <span class="modal-close" onclick="closeEditModal()">&times;</span>
+            <h2 style="margin-bottom: 20px; color: var(--primary);">✏️ 理論の編集</h2>
+            <div class="form-section">
+                <input type="hidden" id="edit-theory-id">
+                <div class="form-row"><label>科目名:</label><input type="text" id="edit-subject-name" class="form-input" readonly style="background: var(--bg-surface);"></div>
+                <div class="form-row"><label>問題集名:</label><input type="text" id="edit-book-name" class="form-input" readonly style="background: var(--bg-surface);"></div>
+                <div class="form-row"><label>単元名:</label><input type="text" id="edit-chapter-name" class="form-input" readonly style="background: var(--bg-surface);"></div>
+                <div class="form-row"><label>問題文:</label><textarea id="edit-question-text" class="form-textarea" rows="5"></textarea></div>
+                <div class="form-row"><label>解答:</label><textarea id="edit-answer-text" class="form-textarea" rows="5"></textarea></div>
+                <div class="form-actions">
+                    <button onclick="saveEditedTheory()" class="btn btn-success">💾 保存</button>
+                    <button onclick="closeEditModal()" class="btn btn-secondary">キャンセル</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="structure-edit-modal" class="modal" style="display:none;">
+        <div class="modal-content">
+            <span class="modal-close" onclick="closeStructureEditModal()">&times;</span>
+            <h2 style="margin-bottom: 20px; color: var(--primary);">✏️ 名称の編集</h2>
+            <div class="form-section">
+                <input type="hidden" id="structure-edit-type">
+                <input type="hidden" id="structure-edit-index">
+                <input type="hidden" id="structure-edit-parent-index">
+                <input type="hidden" id="structure-edit-grandparent-index">
+                <div class="form-row"><label id="structure-edit-label">名称:</label><input type="text" id="structure-edit-name" class="form-input"></div>
+                <div class="form-actions">
+                    <button onclick="saveStructureEdit()" class="btn btn-success">💾 保存</button>
+                    <button onclick="closeStructureEditModal()" class="btn btn-secondary">キャンセル</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="move-modal" class="modal" style="display:none;">
+        <div class="modal-content">
+            <span class="modal-close" onclick="closeMoveModal()">&times;</span>
+            <h2 style="margin-bottom: 20px; color: var(--primary);">📦 問題の移動</h2>
+            <div class="form-section">
+                <input type="hidden" id="move-theory-id">
+                <div id="move-theory-preview" style="background: #f0f4ff; border-left: 4px solid var(--primary); padding: 12px; border-radius: 5px; margin-bottom: 16px; font-size: 0.85rem; color: var(--secondary); line-height: 1.5;"></div>
+                <div class="form-row"><label>科目:</label><select id="move-subject-select" class="form-select" onchange="onMoveSubjectChange(this.value)"><option value="">-- 科目を選択 --</option></select></div>
+                <div class="form-row"><label>問題集:</label><select id="move-book-select" class="form-select" onchange="onMoveBookChange(this.value)" disabled><option value="">-- 問題集を選択 --</option></select></div>
+                <div class="form-row"><label>単元:</label><select id="move-chapter-select" class="form-select" disabled><option value="">-- 単元を選択 --</option></select></div>
+                <div class="form-actions">
+                    <button onclick="saveTheoryMove()" class="btn btn-primary">📦 移動する</button>
+                    <button onclick="closeMoveModal()" class="btn btn-secondary">キャンセル</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>

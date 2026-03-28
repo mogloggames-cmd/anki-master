@@ -1,0 +1,2080 @@
+// ========================================
+// グローバル変数とデータ構造
+// ========================================
+
+let theoryData = {
+    subjects: []
+};
+
+const REVIEW_INTERVALS = {
+    'A': 30,
+    'B': 14,
+    'C': 7,
+    'D': 3,
+    'E': 1
+};
+
+let currentCardIndex = 0;
+let currentReviewList = [];
+let currentDisplayMode = 'today-review';
+let calendarCurrentDate = new Date();
+
+let isRandomOrder = false;
+let isAnswerVisible = false;
+let preserveTheoryId = null;
+let evalMode = localStorage.getItem('evalMode') || 'simple';
+let evalBtnSize = localStorage.getItem('evalBtnSize') || 'small';
+let incorrectMode = localStorage.getItem('incorrectMode') || 'normal';
+
+// Google Drive 同期用
+let syncFileHandle = null;
+let syncWriteTimer = null;
+let lastSyncTime = null;
+
+// 評価の「元に戻す」用
+let lastEvalAction = null;
+
+// 今日の不正解復習用
+let todayIncorrectList = [];
+let incorrectCardIndex = 0;
+
+// 教材構造管理の階層ナビゲーション用
+let currentStructurePath = [];
+
+// 今日の完了カウント
+let completedTodayKey = 'completedToday_' + getTodayStringStatic();
+let completedTodayCount = parseInt(localStorage.getItem(completedTodayKey) || '0');
+let initialTodayTotal = 0;
+
+// カードアニメーション方向
+let cardAnimDirection = 'right';
+
+// スワイプ用
+let touchStartX = 0;
+let touchStartY = 0;
+const SWIPE_THRESHOLD = 50;
+
+// ========================================
+// 初期化
+// ========================================
+
+document.addEventListener('DOMContentLoaded', async () => {
+    loadData();
+    await initSync();
+    initializeEventListeners();
+    updateAllDisplays();
+    updateSubjectSelectors();
+    initButtonSettings();
+    initIncorrectModeButtons();
+    registerServiceWorker();
+});
+
+function registerServiceWorker() {
+    if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('./sw.js').catch(() => {});
+    }
+}
+
+// ========================================
+// Toast通知
+// ========================================
+
+function showToast(message, type = 'info', duration = 2500) {
+    let container = document.getElementById('toast-container');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'toast-container';
+        document.body.appendChild(container);
+    }
+    const toast = document.createElement('div');
+    toast.className = 'toast toast-' + type;
+    toast.textContent = message;
+    container.appendChild(toast);
+    requestAnimationFrame(() => {
+        requestAnimationFrame(() => toast.classList.add('toast-visible'));
+    });
+    setTimeout(() => {
+        toast.classList.remove('toast-visible');
+        toast.addEventListener('transitionend', () => toast.remove(), { once: true });
+        setTimeout(() => toast.remove(), 500);
+    }, duration);
+}
+
+// ========================================
+// データ管理
+// ========================================
+
+function loadData() {
+    const saved = localStorage.getItem('theoryData');
+    if (saved) {
+        theoryData = JSON.parse(saved);
+        let needsSave = false;
+        getAllTheories().forEach(theory => {
+            if ('history' in theory || 'firstDate' in theory || 'lastDate' in theory) {
+                delete theory.history;
+                delete theory.firstDate;
+                delete theory.lastDate;
+                needsSave = true;
+            }
+        });
+        // マイグレーション: 科目activeフラグ
+        theoryData.subjects.forEach(subject => {
+            if (subject.active === undefined) {
+                subject.active = true;
+                needsSave = true;
+            }
+        });
+        if (needsSave) saveData();
+    } else {
+        theoryData = {
+            subjects: [
+                {
+                    name: "サンプル科目",
+                    active: true,
+                    books: [
+                        {
+                            name: "サンプル教材",
+                            chapters: [
+                                {
+                                    name: "第1章 サンプル",
+                                    theories: [
+                                        {
+                                            id: generateId(),
+                                            questionText: "暗記マスターへようこそ！\nこれはサンプルの問題です。（　①　）に入る言葉は？",
+                                            answerText: "①サンプル回答\n\n設定タブから問題を登録してみましょう。",
+                                            evaluation: "E",
+                                            nextReview: getTodayStringStatic(),
+                                            learned: true
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        };
+        saveData();
+    }
+}
+
+function saveData() {
+    localStorage.setItem('theoryData', JSON.stringify(theoryData));
+    updateSubjectSelectors();
+    writeSyncFile();
+}
+
+function generateId() {
+    return Date.now().toString(36) + Math.random().toString(36).substr(2);
+}
+
+// ========================================
+// Google Drive 同期
+// ========================================
+
+function openSyncDB() {
+    return new Promise((resolve, reject) => {
+        const req = indexedDB.open('taxTutorSync', 1);
+        req.onupgradeneeded = () => req.result.createObjectStore('fileHandles');
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+    });
+}
+
+async function saveSyncHandle(handle) {
+    const db = await openSyncDB();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction('fileHandles', 'readwrite');
+        tx.objectStore('fileHandles').put(handle, 'syncFileHandle');
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+    });
+}
+
+async function loadSyncHandle() {
+    const db = await openSyncDB();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction('fileHandles', 'readonly');
+        const req = tx.objectStore('fileHandles').get('syncFileHandle');
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = () => reject(req.error);
+    });
+}
+
+async function removeSyncHandle() {
+    const db = await openSyncDB();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction('fileHandles', 'readwrite');
+        tx.objectStore('fileHandles').delete('syncFileHandle');
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+    });
+}
+
+async function writeSyncFile() {
+    if (!syncFileHandle) return;
+    if (syncWriteTimer) clearTimeout(syncWriteTimer);
+    syncWriteTimer = setTimeout(async () => {
+        try {
+            const writable = await syncFileHandle.createWritable();
+            await writable.write(JSON.stringify(theoryData, null, 2));
+            await writable.close();
+            lastSyncTime = new Date();
+            updateSyncStatus('synced');
+        } catch (err) {
+            console.error('Sync write error:', err);
+            updateSyncStatus('error', err.message);
+        }
+    }, 500);
+}
+
+async function readSyncFile(handle) {
+    try {
+        const perm = await handle.queryPermission({ mode: 'readwrite' });
+        if (perm !== 'granted') {
+            const req = await handle.requestPermission({ mode: 'readwrite' });
+            if (req !== 'granted') return null;
+        }
+        const file = await handle.getFile();
+        const text = await file.text();
+        if (!text.trim()) return null;
+        const data = JSON.parse(text);
+        if (data && data.subjects) return data;
+        return null;
+    } catch (err) {
+        console.error('Sync read error:', err);
+        return null;
+    }
+}
+
+async function setupSyncFile() {
+    try {
+        const handle = await window.showSaveFilePicker({
+            suggestedName: 'anki_master_sync.json',
+            types: [{ description: 'JSON File', accept: { 'application/json': ['.json'] } }]
+        });
+        syncFileHandle = handle;
+        await saveSyncHandle(handle);
+        await writeSyncFile();
+        updateSyncStatus('synced');
+    } catch (err) {
+        if (err.name !== 'AbortError') {
+            console.error('Sync setup error:', err);
+            showToast('同期ファイルの設定に失敗しました', 'error');
+        }
+    }
+}
+
+async function disconnectSync() {
+    syncFileHandle = null;
+    lastSyncTime = null;
+    await removeSyncHandle();
+    updateSyncStatus('disconnected');
+}
+
+async function initSync() {
+    try {
+        const handle = await loadSyncHandle();
+        if (!handle) { updateSyncStatus('disconnected'); return; }
+        const perm = await handle.queryPermission({ mode: 'readwrite' });
+        if (perm === 'granted') {
+            syncFileHandle = handle;
+            const fileData = await readSyncFile(handle);
+            if (fileData) {
+                theoryData = fileData;
+                localStorage.setItem('theoryData', JSON.stringify(theoryData));
+            }
+            updateSyncStatus('synced');
+        } else {
+            syncFileHandle = handle;
+            updateSyncStatus('needs-permission');
+        }
+    } catch (err) {
+        console.error('Sync init error:', err);
+        updateSyncStatus('disconnected');
+    }
+}
+
+async function requestSyncPermission() {
+    if (!syncFileHandle) return;
+    try {
+        const perm = await syncFileHandle.requestPermission({ mode: 'readwrite' });
+        if (perm === 'granted') {
+            const fileData = await readSyncFile(syncFileHandle);
+            if (fileData) {
+                theoryData = fileData;
+                localStorage.setItem('theoryData', JSON.stringify(theoryData));
+                updateAllDisplays();
+            }
+            updateSyncStatus('synced');
+        }
+    } catch (err) {
+        console.error('Permission request error:', err);
+    }
+}
+
+function updateSyncStatus(status, errorMsg) {
+    const statusEl = document.getElementById('sync-status');
+    const disconnectBtn = document.getElementById('sync-disconnect-btn');
+    if (!statusEl) return;
+    switch (status) {
+        case 'synced':
+            const timeStr = lastSyncTime ? lastSyncTime.toLocaleTimeString('ja-JP') : '';
+            const fileName = syncFileHandle ? syncFileHandle.name : '';
+            statusEl.innerHTML = '<span style="color: #27ae60;">● 同期中</span>' +
+                (fileName ? ' (' + fileName + ')' : '') +
+                (timeStr ? '<br><small style="color: var(--text-light);">最終同期: ' + timeStr + '</small>' : '');
+            disconnectBtn.style.display = '';
+            break;
+        case 'needs-permission':
+            statusEl.innerHTML = '<span style="color: #f39c12;">● 権限の再許可が必要です</span>' +
+                '<br><button class="btn btn-small btn-secondary" onclick="requestSyncPermission()" style="margin-top: 5px;">許可する</button>';
+            disconnectBtn.style.display = '';
+            break;
+        case 'error':
+            statusEl.innerHTML = '<span style="color: #e74c3c;">● 同期エラー</span>' +
+                (errorMsg ? '<br><small style="color: var(--text-light);">' + errorMsg + '</small>' : '');
+            disconnectBtn.style.display = '';
+            break;
+        default:
+            statusEl.innerHTML = '<span style="color: #95a5a6;">● 未設定</span>';
+            disconnectBtn.style.display = 'none';
+            break;
+    }
+}
+
+// ========================================
+// 日付ユーティリティ
+// ========================================
+
+function getTodayStringStatic() {
+    const today = new Date();
+    return formatDateISO(today);
+}
+
+function getTodayString() {
+    return getTodayStringStatic();
+}
+
+function formatDateISO(date) {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+}
+
+function formatDateJP(dateStr) {
+    if (!dateStr) return '';
+    const date = new Date(dateStr);
+    return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日`;
+}
+
+function formatDateShort(dateStr) {
+    if (!dateStr) return '';
+    const date = new Date(dateStr);
+    return `${date.getMonth() + 1}/${date.getDate()}`;
+}
+
+function addDays(dateStr, days) {
+    const date = new Date(dateStr);
+    date.setDate(date.getDate() + days);
+    return formatDateISO(date);
+}
+
+function daysBetween(dateStr1, dateStr2) {
+    const date1 = new Date(dateStr1);
+    const date2 = new Date(dateStr2);
+    return Math.ceil((date2 - date1) / (1000 * 60 * 60 * 24));
+}
+
+// ========================================
+// イベントリスナー初期化
+// ========================================
+
+function initializeEventListeners() {
+    // タブ切り替え
+    document.querySelectorAll('.tab-button').forEach(button => {
+        button.addEventListener('click', () => switchTab(button.dataset.tab));
+    });
+
+    // 全理論一覧フィルター
+    document.querySelectorAll('.filter-btn[data-filter]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.filter-btn[data-filter]').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            updateAllTheoriesList();
+        });
+    });
+
+    document.getElementById('filter-subject').addEventListener('change', () => updateAllTheoriesList());
+
+    // カレンダー
+    document.getElementById('prev-month').addEventListener('click', () => {
+        calendarCurrentDate.setMonth(calendarCurrentDate.getMonth() - 1);
+        updateCalendar();
+    });
+    document.getElementById('next-month').addEventListener('click', () => {
+        calendarCurrentDate.setMonth(calendarCurrentDate.getMonth() + 1);
+        updateCalendar();
+    });
+
+    // 教材管理モード
+    document.querySelectorAll('.mode-btn').forEach(btn => {
+        btn.addEventListener('click', () => switchManagementMode(btn.dataset.mode));
+    });
+
+    document.getElementById('add-and-continue').addEventListener('click', () => addTheory(true));
+    document.getElementById('add-and-finish').addEventListener('click', () => addTheory(false));
+    document.getElementById('bulk-register').addEventListener('click', () => bulkRegisterTheories());
+
+    // 個別登録セレクター
+    document.getElementById('subject-select').addEventListener('change', (e) => onSubjectSelectChange(e.target.value, 'individual'));
+    document.getElementById('book-select').addEventListener('change', (e) => onBookSelectChange(e.target.value, 'individual'));
+    document.getElementById('chapter-select').addEventListener('change', (e) => onChapterSelectChange(e.target.value, 'individual'));
+
+    // 一括登録セレクター
+    document.getElementById('bulk-subject-select').addEventListener('change', (e) => onSubjectSelectChange(e.target.value, 'bulk'));
+    document.getElementById('bulk-book-select').addEventListener('change', (e) => onBookSelectChange(e.target.value, 'bulk'));
+    document.getElementById('bulk-chapter-select').addEventListener('change', (e) => onChapterSelectChange(e.target.value, 'bulk'));
+
+    // Google Drive 同期
+    document.getElementById('sync-setup-btn').addEventListener('click', () => setupSyncFile());
+    document.getElementById('sync-disconnect-btn').addEventListener('click', () => {
+        if (confirm('同期を解除しますか？\nローカルのデータはそのまま残ります。')) disconnectSync();
+    });
+
+    // CSV
+    document.getElementById('export-csv-btn').addEventListener('click', () => exportCSV());
+    document.getElementById('import-csv-btn').addEventListener('click', () => document.getElementById('import-csv-input').click());
+    document.getElementById('import-csv-input').addEventListener('change', (e) => importCSV(e.target.files[0]));
+
+    // リセット
+    document.getElementById('reset-all-evaluations-btn').addEventListener('click', () => resetAllEvaluations());
+    document.getElementById('bulk-unlearn-e-btn').addEventListener('click', () => bulkUnlearnByEvaluation('E'));
+
+    // 復習コントロール
+    document.getElementById('undo-eval-btn').addEventListener('click', () => undoLastEvaluation());
+    document.getElementById('toggle-random-btn').addEventListener('click', () => toggleRandomOrder());
+    document.getElementById('toggle-answer-btn').addEventListener('click', () => toggleAnswerVisibility());
+
+    // 設定パネル
+    document.getElementById('btn-settings-toggle').addEventListener('click', () => toggleBtnSettingsPanel());
+    document.addEventListener('click', (e) => {
+        const panel = document.getElementById('btn-settings-panel');
+        const toggle = document.getElementById('btn-settings-toggle');
+        if (panel && panel.style.display !== 'none' && !panel.contains(e.target) && e.target !== toggle) {
+            panel.style.display = 'none';
+        }
+    });
+
+    // エクスポートフィルター
+    document.querySelectorAll('.export-eval-filter').forEach(cb => {
+        cb.addEventListener('change', () => updateExportFilterCount());
+    });
+
+    // モーダル
+    document.querySelector('.modal-close').addEventListener('click', closeModal);
+    document.getElementById('card-modal').addEventListener('click', (e) => {
+        if (e.target.id === 'card-modal') closeModal();
+    });
+
+    // スワイプジェスチャー
+    initSwipeGestures();
+}
+
+// ========================================
+// スワイプジェスチャー
+// ========================================
+
+function initSwipeGestures() {
+    const containers = ['today-review-content', 'incorrect-review-content'];
+    containers.forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.addEventListener('touchstart', (e) => {
+            touchStartX = e.touches[0].clientX;
+            touchStartY = e.touches[0].clientY;
+        }, { passive: true });
+        el.addEventListener('touchend', (e) => {
+            const dx = e.changedTouches[0].clientX - touchStartX;
+            const dy = e.changedTouches[0].clientY - touchStartY;
+            if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > SWIPE_THRESHOLD) {
+                if (currentReviewList.length === 0) return;
+                if (dx < 0) {
+                    // swipe left = next
+                    cardAnimDirection = 'right';
+                    currentCardIndex = (currentCardIndex + 1) % currentReviewList.length;
+                } else {
+                    // swipe right = prev
+                    cardAnimDirection = 'left';
+                    currentCardIndex = (currentCardIndex - 1 + currentReviewList.length) % currentReviewList.length;
+                }
+                const containerId = id;
+                displayCurrentCard(containerId);
+            }
+        }, { passive: true });
+    });
+}
+
+// ========================================
+// タブ切り替え
+// ========================================
+
+function switchTab(tabName) {
+    document.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
+    document.querySelector(`[data-tab="${tabName}"]`).classList.add('active');
+    document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+    document.getElementById(tabName).classList.add('active');
+    currentDisplayMode = tabName;
+
+    switch(tabName) {
+        case 'today-review': updateTodayReview(); break;
+        case 'incorrect-review': displayIncorrectReview(); break;
+        case 'all-theories': updateFilterSubjectSelect(); updateAllTheoriesList(); break;
+        case 'calendar': updateCalendar(); break;
+    }
+}
+
+// ========================================
+// 全理論の取得
+// ========================================
+
+function getAllTheories(includeInactive = true) {
+    const theories = [];
+    theoryData.subjects.forEach(subject => {
+        if (!includeInactive && subject.active === false) return;
+        subject.books.forEach(book => {
+            book.chapters.forEach(chapter => {
+                chapter.theories.forEach(theory => {
+                    theories.push({
+                        ...theory,
+                        learned: theory.learned !== false,
+                        subjectName: subject.name,
+                        bookName: book.name,
+                        chapterName: chapter.name
+                    });
+                });
+            });
+        });
+    });
+    return theories;
+}
+
+// ========================================
+// ダッシュボード
+// ========================================
+
+function updateDashboard(learnedCount, unlearnedCount, learnedReviewList) {
+    // 完了数
+    document.getElementById('review-completed').textContent = completedTodayCount;
+    document.getElementById('review-total').textContent = learnedCount;
+
+    // 進捗リング
+    const total = completedTodayCount + learnedCount;
+    const pct = total > 0 ? Math.round((completedTodayCount / total) * 100) : 0;
+    const circumference = 2 * Math.PI * 26; // r=26
+    const offset = circumference - (pct / 100) * circumference;
+    const ring = document.getElementById('progress-ring');
+    const ringPct = document.getElementById('progress-ring-pct');
+    if (ring) ring.setAttribute('stroke-dashoffset', offset);
+    if (ringPct) ringPct.textContent = pct + '%';
+
+    // 評価内訳バッジ
+    const breakdown = document.getElementById('dashboard-eval-breakdown');
+    if (breakdown) {
+        const eCount = learnedReviewList.filter(t => t.evaluation === 'E').length;
+        const dCount = learnedReviewList.filter(t => t.evaluation === 'D').length;
+        const cCount = learnedReviewList.filter(t => t.evaluation === 'C').length;
+        const bCount = learnedReviewList.filter(t => t.evaluation === 'B').length;
+        const aCount = learnedReviewList.filter(t => t.evaluation === 'A').length;
+        let pills = '';
+        if (eCount) pills += `<span class="eval-pill pill-e">E: ${eCount}</span>`;
+        if (dCount) pills += `<span class="eval-pill pill-d">D: ${dCount}</span>`;
+        if (cCount) pills += `<span class="eval-pill pill-c">C: ${cCount}</span>`;
+        if (bCount) pills += `<span class="eval-pill pill-b">B: ${bCount}</span>`;
+        if (aCount) pills += `<span class="eval-pill pill-a">A: ${aCount}</span>`;
+        if (unlearnedCount) pills += `<span class="eval-pill pill-unlearned">未習: ${unlearnedCount}</span>`;
+        breakdown.innerHTML = pills;
+    }
+
+    // 科目チップ
+    updateSubjectChips();
+
+    // 7日間カレンダーストリップ
+    updateCalendarStrip();
+}
+
+function updateSubjectChips() {
+    const container = document.getElementById('subject-chips');
+    if (!container) return;
+    if (theoryData.subjects.length <= 1) {
+        container.innerHTML = '';
+        return;
+    }
+    let html = '';
+    theoryData.subjects.forEach(subject => {
+        const cls = subject.active === false ? 'subject-chip inactive' : 'subject-chip';
+        html += `<span class="${cls}" onclick="toggleSubjectActive('${subject.name}')">${subject.name}</span>`;
+    });
+    container.innerHTML = html;
+}
+
+function toggleSubjectActive(subjectName) {
+    const subject = theoryData.subjects.find(s => s.name === subjectName);
+    if (!subject) return;
+    subject.active = subject.active === false ? true : false;
+    saveData();
+    updateAllDisplays();
+    showToast(subject.active ? `${subjectName}をアクティブに` : `${subjectName}を休止に`, 'info');
+}
+
+function updateCalendarStrip() {
+    const container = document.getElementById('calendar-strip');
+    if (!container) return;
+    const today = getTodayString();
+    const weekDays = ['日', '月', '火', '水', '木', '金', '土'];
+    let html = '';
+    for (let i = 0; i < 7; i++) {
+        const dateStr = addDays(today, i);
+        const date = new Date(dateStr);
+        const dayLabel = i === 0 ? '今日' : weekDays[date.getDay()];
+        const count = getTodayReviewList(dateStr).length;
+        const todayClass = i === 0 ? ' today' : '';
+        let loadClass = 'load-none';
+        if (count > 20) loadClass = 'load-heavy';
+        else if (count > 0) loadClass = 'load-light';
+        html += `
+            <div class="strip-day${todayClass}" onclick="switchTab('calendar')">
+                <div class="strip-day-label">${dayLabel}</div>
+                <div class="strip-day-num">${date.getDate()}</div>
+                <div class="strip-day-count ${loadClass}">${count > 0 ? count + '問' : '-'}</div>
+            </div>
+        `;
+    }
+    container.innerHTML = html;
+}
+
+// ========================================
+// タブ1：今日の復習プール
+// ========================================
+
+function updateTodayReview() {
+    const today = getTodayString();
+    const learnedReviewList = getTodayReviewList(today);
+    const unlearnedList = getUnlearnedList();
+
+    if (isRandomOrder) {
+        shuffleArray(learnedReviewList);
+        shuffleArray(unlearnedList);
+    } else {
+        applySortMode(learnedReviewList, 'priority');
+        applySortMode(unlearnedList, 'priority');
+    }
+
+    currentReviewList = [...learnedReviewList, ...unlearnedList];
+
+    // 初回トータル記録
+    if (initialTodayTotal === 0 && learnedReviewList.length > 0) {
+        initialTodayTotal = learnedReviewList.length + completedTodayCount;
+    }
+
+    if (preserveTheoryId) {
+        const preservedIndex = currentReviewList.findIndex(t => t.id === preserveTheoryId);
+        if (preservedIndex !== -1) {
+            currentCardIndex = preservedIndex;
+        } else if (currentCardIndex >= currentReviewList.length) {
+            currentCardIndex = Math.max(0, currentReviewList.length - 1);
+        }
+        preserveTheoryId = null;
+    } else {
+        currentCardIndex = 0;
+    }
+
+    // ダッシュボード更新
+    updateDashboard(learnedReviewList.length, unlearnedList.length, learnedReviewList);
+
+    // プログレスバー
+    updateProgressBar();
+
+    // カード表示
+    displayCurrentCard('today-review-content');
+}
+
+function updateProgressBar() {
+    const total = initialTodayTotal || (currentReviewList.length + completedTodayCount);
+    const pct = total > 0 ? Math.round((completedTodayCount / total) * 100) : 0;
+    const bar = document.getElementById('review-progress-bar');
+    const text = document.getElementById('review-progress-text');
+    if (bar) bar.style.width = pct + '%';
+    if (text) text.textContent = completedTodayCount + ' / ' + total + ' 完了';
+}
+
+function getTodayReviewList(targetDate) {
+    const theories = getAllTheories(false); // アクティブ科目のみ
+    const reviewList = [];
+    theories.forEach(theory => {
+        if (theory.learned && theory.nextReview && theory.nextReview <= targetDate) {
+            const daysOverdue = daysBetween(theory.nextReview, targetDate);
+            const priority = calculatePriority(theory.evaluation, daysOverdue);
+            reviewList.push({ ...theory, daysOverdue, priority });
+        }
+    });
+    return reviewList.sort((a, b) => b.priority - a.priority);
+}
+
+function getUnlearnedList() {
+    const theories = getAllTheories(false);
+    return theories.filter(theory => !theory.learned);
+}
+
+function calculatePriority(evaluation, daysOverdue) {
+    const evalWeights = { 'E': 120, 'D': 100, 'C': 80, 'B': 60, 'A': 40 };
+    return (evalWeights[evaluation] || 0) + (daysOverdue * 10);
+}
+
+function applySortMode(list, mode) {
+    switch (mode) {
+        case 'evaluation':
+            const evalOrder = { 'E': 0, 'D': 1, 'C': 2, 'B': 3, 'A': 4 };
+            return list.sort((a, b) => {
+                const diff = (evalOrder[a.evaluation] || 0) - (evalOrder[b.evaluation] || 0);
+                return diff !== 0 ? diff : (b.priority || 0) - (a.priority || 0);
+            });
+        case 'subject':
+            return list.sort((a, b) => {
+                const s = a.subjectName.localeCompare(b.subjectName, 'ja');
+                if (s !== 0) return s;
+                const bk = a.bookName.localeCompare(b.bookName, 'ja');
+                return bk !== 0 ? bk : a.chapterName.localeCompare(b.chapterName, 'ja');
+            });
+        case 'overdue':
+            return list.sort((a, b) => {
+                const diff = (b.daysOverdue || 0) - (a.daysOverdue || 0);
+                return diff !== 0 ? diff : (b.priority || 0) - (a.priority || 0);
+            });
+        case 'priority':
+        default:
+            return list.sort((a, b) => (b.priority || 0) - (a.priority || 0));
+    }
+}
+
+// ========================================
+// カード表示と評価
+// ========================================
+
+function displayCurrentCard(containerId) {
+    const container = document.getElementById(containerId);
+
+    isAnswerVisible = false;
+    const answerBtn = document.getElementById('toggle-answer-btn');
+    if (answerBtn) answerBtn.textContent = '👁️ 回答表示';
+
+    if (currentReviewList.length === 0) {
+        // 完了チェック
+        if (completedTodayCount > 0) {
+            showCompletionCelebration(container);
+        } else {
+            container.innerHTML = `
+                <div class="empty-state">
+                    <div class="empty-state-icon">🎉</div>
+                    <div class="empty-state-title">今日の復習はありません</div>
+                    <div class="empty-state-message">新しい理論を追加するか、明日の復習をお待ちください。</div>
+                </div>
+            `;
+        }
+        return;
+    }
+
+    if (currentCardIndex >= currentReviewList.length) {
+        currentCardIndex = 0;
+    }
+
+    const theory = currentReviewList[currentCardIndex];
+    const cardHTML = createTheoryCard(theory, true);
+
+    // アニメーション付きで表示
+    const animClass = cardAnimDirection === 'right' ? 'card-slide-in-right' : 'card-slide-in-left';
+    container.innerHTML = cardHTML;
+    const card = container.querySelector('.theory-card');
+    if (card) {
+        card.classList.add(animClass);
+        card.addEventListener('animationend', () => card.classList.remove(animClass), { once: true });
+    }
+
+    cardAnimDirection = 'right'; // reset
+    attachEvaluationButtons(containerId);
+}
+
+function showCompletionCelebration(container) {
+    container.innerHTML = `
+        <div class="celebration">
+            <div class="celebration-emoji">🎉</div>
+            <div class="celebration-title">今日の復習完了！</div>
+            <div class="celebration-subtitle">お疲れさまでした</div>
+            <div class="celebration-stats">
+                <span class="eval-pill pill-a">完了: ${completedTodayCount}問</span>
+            </div>
+        </div>
+    `;
+}
+
+function createTheoryCard(theory, showEvalButtons = false) {
+    const questionHTML = formatQuestionText(theory);
+    const daysOverdueText = theory.daysOverdue > 0 ? `⚠️ ${theory.daysOverdue}日滞留中` : '';
+    const unlearnedBadge = !theory.learned ? '<span class="badge-unlearned">🆕 未習</span>' : '';
+
+    let html = `
+        <div class="theory-card">
+            <div class="card-header">
+                <div class="card-path">${theory.subjectName} &gt; ${theory.bookName} &gt; ${theory.chapterName}</div>
+                <div class="card-number">No.${currentCardIndex + 1} / ${currentReviewList.length}${unlearnedBadge}</div>
+            </div>
+            <div class="question-section">
+                <h4>【問題】</h4>
+                <p>${questionHTML}</p>
+            </div>
+            <div class="answer-section" id="answer-section-display" style="${isAnswerVisible ? '' : 'display: none;'}">
+                <h4>【解答】</h4>
+                <p>${formatAnswerText(theory.answerText)}</p>
+            </div>
+            <div class="card-info">
+                <div class="current-eval">
+                    現在：<span class="eval-badge eval-${theory.evaluation.toLowerCase()}">${theory.evaluation}</span>
+                    <span style="color: var(--text-light); font-size: 0.8rem;">
+                        ${theory.nextReview ? '次回: ' + formatDateShort(theory.nextReview) : '未スケジュール'}
+                    </span>
+                    <button class="btn btn-warning btn-small" onclick="openEditModal('${theory.id}')">✏️</button>
+                </div>
+                ${daysOverdueText ? `<div class="overdue-warning">${daysOverdueText}</div>` : ''}
+            </div>
+    `;
+
+    if (showEvalButtons) {
+        const isLarge = evalBtnSize === 'large';
+        const sz = isLarge ? ' eval-btn-large' : '';
+        const compact = isLarge ? '' : ' eval-buttons-compact';
+        if (evalMode === 'simple') {
+            html += `
+            <div class="eval-buttons${compact}" style="display: flex; gap: 8px;">
+                <button class="eval-btn${sz}" style="background: #4CAF50; flex: 1;" data-action="correct">✅ 正解</button>
+                <button class="eval-btn${sz}" style="background: #f44336; flex: 1;" data-action="incorrect">❌ 不正解</button>
+            </div>`;
+        } else {
+            html += `
+            <div class="eval-buttons${compact}" style="display: flex; gap: ${isLarge ? '8px' : '6px'};">
+                <button class="eval-btn eval-btn-a${sz}" style="flex: 1;" data-eval="A">A</button>
+                <button class="eval-btn eval-btn-b${sz}" style="flex: 1;" data-eval="B">B</button>
+                <button class="eval-btn eval-btn-c${sz}" style="flex: 1;" data-eval="C">C</button>
+                <button class="eval-btn eval-btn-d${sz}" style="flex: 1;" data-eval="D">D</button>
+                <button class="eval-btn eval-btn-e${sz}" style="flex: 1;" data-eval="E">E</button>
+            </div>`;
+        }
+    }
+
+    html += `</div>`;
+    return html;
+}
+
+function formatQuestionText(theory) {
+    return theory.questionText.replace(/\n/g, '<br>');
+}
+
+function formatAnswerText(text) {
+    text = text.replace(/__([^_]+)__/g, '<u style="text-decoration: underline; font-weight: bold;">$1</u>');
+    return text.replace(/\n/g, '<br>');
+}
+
+function attachEvaluationButtons(containerId) {
+    const container = document.getElementById(containerId);
+    container.querySelectorAll('.eval-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const action = btn.dataset.action;
+            const evaluation = btn.dataset.eval;
+            if (action === 'correct') {
+                const newEval = upgradeEvaluation(currentReviewList[currentCardIndex].evaluation);
+                recordEvaluation(currentReviewList[currentCardIndex], newEval);
+            } else if (action === 'incorrect') {
+                const currentEval = currentReviewList[currentCardIndex].evaluation;
+                let newEval;
+                if (incorrectMode === 'strict') {
+                    newEval = 'E';
+                } else if (incorrectMode === 'gentle') {
+                    newEval = currentEval; // 維持
+                } else {
+                    newEval = downgradeEvaluation(currentEval);
+                }
+                recordEvaluation(currentReviewList[currentCardIndex], newEval, incorrectMode === 'gentle');
+            } else {
+                recordEvaluation(currentReviewList[currentCardIndex], evaluation);
+            }
+        });
+    });
+}
+
+function upgradeEvaluation(current) {
+    const levels = ['E', 'D', 'C', 'B', 'A'];
+    const index = levels.indexOf(current);
+    if (index === -1 || index === levels.length - 1) return current;
+    return levels[index + 1];
+}
+
+function downgradeEvaluation(current) {
+    const levels = ['E', 'D', 'C', 'B', 'A'];
+    const index = levels.indexOf(current);
+    if (index === -1 || index === 0) return current;
+    return levels[index - 1];
+}
+
+function recordEvaluation(theory, evaluation, gentleMode = false) {
+    const today = getTodayString();
+    const originalTheory = findTheoryById(theory.id);
+    if (!originalTheory) return;
+
+    const prevEval = originalTheory.evaluation;
+    lastEvalAction = {
+        theoryId: theory.id,
+        prevEval: prevEval,
+        prevNextReview: originalTheory.nextReview,
+        prevLearned: originalTheory.learned,
+        cardIndex: currentCardIndex
+    };
+
+    // 不正解トラッキング
+    const evalOrder = ['E', 'D', 'C', 'B', 'A'];
+    if (currentDisplayMode === 'today-review' && evalOrder.indexOf(evaluation) <= evalOrder.indexOf(prevEval)) {
+        if (!todayIncorrectList.find(t => t.theoryId === theory.id)) {
+            todayIncorrectList.push({
+                theoryId: theory.id,
+                subjectName: theory.subjectName,
+                bookName: theory.bookName,
+                chapterName: theory.chapterName,
+                questionText: theory.questionText,
+                answerText: theory.answerText,
+                evaluation: evaluation
+            });
+        }
+    }
+
+    originalTheory.evaluation = evaluation;
+    if (gentleMode) {
+        originalTheory.nextReview = addDays(today, 1);
+    } else {
+        originalTheory.nextReview = addDays(today, REVIEW_INTERVALS[evaluation]);
+    }
+    originalTheory.learned = true;
+
+    // 完了カウント更新
+    if (currentDisplayMode === 'today-review') {
+        completedTodayCount++;
+        localStorage.setItem(completedTodayKey, completedTodayCount.toString());
+    }
+
+    // カード位置保持
+    if (currentDisplayMode === 'today-review') {
+        const nextIndex = currentCardIndex + 1;
+        if (nextIndex < currentReviewList.length) {
+            preserveTheoryId = currentReviewList[nextIndex].id;
+        } else if (currentCardIndex > 0 && currentCardIndex - 1 < currentReviewList.length) {
+            preserveTheoryId = currentReviewList[currentCardIndex - 1].id;
+        }
+    }
+
+    cardAnimDirection = 'right';
+    saveData();
+    updateAllDisplays();
+}
+
+function undoLastEvaluation() {
+    if (!lastEvalAction) return;
+    const theory = findTheoryById(lastEvalAction.theoryId);
+    if (!theory) { lastEvalAction = null; return; }
+
+    theory.evaluation = lastEvalAction.prevEval;
+    theory.nextReview = lastEvalAction.prevNextReview;
+    theory.learned = lastEvalAction.prevLearned;
+
+    // 完了カウント戻す
+    if (completedTodayCount > 0) {
+        completedTodayCount--;
+        localStorage.setItem(completedTodayKey, completedTodayCount.toString());
+    }
+
+    preserveTheoryId = lastEvalAction.theoryId;
+    lastEvalAction = null;
+    cardAnimDirection = 'left';
+    saveData();
+    updateAllDisplays();
+}
+
+function findTheoryById(id) {
+    for (let subject of theoryData.subjects) {
+        for (let book of subject.books) {
+            for (let chapter of book.chapters) {
+                const theory = chapter.theories.find(t => t.id === id);
+                if (theory) return theory;
+            }
+        }
+    }
+    return null;
+}
+
+// ========================================
+// 全理論一覧
+// ========================================
+
+function updateFilterSubjectSelect() {
+    const select = document.getElementById('filter-subject');
+    select.innerHTML = '<option value="">すべて</option>';
+    theoryData.subjects.forEach(subject => {
+        const option = document.createElement('option');
+        option.value = subject.name;
+        option.textContent = subject.name;
+        select.appendChild(option);
+    });
+}
+
+function updateAllTheoriesList() {
+    const evalFilter = document.querySelector('.filter-btn[data-filter].active').dataset.filter;
+    const subjectFilter = document.getElementById('filter-subject').value;
+    let theories = getAllTheories();
+
+    if (evalFilter === 'unlearned') theories = theories.filter(t => !t.learned);
+    else if (evalFilter !== 'all') theories = theories.filter(t => t.evaluation === evalFilter);
+    if (subjectFilter) theories = theories.filter(t => t.subjectName === subjectFilter);
+
+    const container = document.getElementById('all-theories-list');
+
+    if (theories.length === 0) {
+        container.innerHTML = `
+            <div class="empty-state">
+                <div class="empty-state-icon">🔍</div>
+                <div class="empty-state-title">該当する理論がありません</div>
+                <div class="empty-state-message">フィルター条件を変更してください</div>
+            </div>
+        `;
+        return;
+    }
+
+    const unlearnedTheories = theories.filter(t => !t.learned);
+    const learnedTheories = theories.filter(t => t.learned);
+    const grouped = { 'E': [], 'D': [], 'C': [], 'B': [], 'A': [] };
+    learnedTheories.forEach(t => { if (grouped[t.evaluation]) grouped[t.evaluation].push(t); });
+
+    let html = '';
+
+    if (unlearnedTheories.length > 0) {
+        html += `<h3 style="margin: 24px 0 12px; color: #95a5a6;">🆕 未習（${unlearnedTheories.length}問）</h3><div class="theory-list">`;
+        unlearnedTheories.forEach(t => html += renderTheoryItem(t));
+        html += '</div>';
+    }
+
+    const emojis = { 'E': '🔴', 'D': '🟠', 'C': '🟡', 'B': '🟢', 'A': '🔵' };
+    ['E', 'D', 'C', 'B', 'A'].forEach(grade => {
+        if (grouped[grade].length > 0) {
+            html += `<h3 style="margin: 24px 0 12px; color: var(--eval-${grade.toLowerCase()});">${emojis[grade]} ${grade}評価（${grouped[grade].length}問）</h3><div class="theory-list">`;
+            grouped[grade].forEach(t => html += renderTheoryItem(t));
+            html += '</div>';
+        }
+    });
+
+    container.innerHTML = html;
+}
+
+function renderTheoryItem(theory) {
+    const learnedLabel = theory.learned ? '既習' : '未習';
+    const learnedColor = theory.learned ? '#27ae60' : '#95a5a6';
+    const toggleLabel = theory.learned ? '→未習' : '→既習';
+    const nextReviewText = theory.nextReview ? formatDateShort(theory.nextReview) : '未設定';
+
+    return `
+        <div class="theory-item">
+            <div class="theory-item-header">
+                <div style="flex: 1;">
+                    <div class="theory-item-path">
+                        ${theory.subjectName} &gt; ${theory.bookName} &gt; ${theory.chapterName}
+                        <span style="background: ${learnedColor}; color: white; padding: 1px 6px; border-radius: 3px; font-size: 0.7rem; margin-left: 4px;">${learnedLabel}</span>
+                    </div>
+                    <div class="theory-item-question">${theory.questionText.substring(0, 60)}${theory.questionText.length > 60 ? '...' : ''}</div>
+                    <div class="theory-item-info"><span>次回: ${nextReviewText}</span></div>
+                </div>
+            </div>
+            <div class="theory-item-actions">
+                <button class="btn btn-primary btn-small" onclick="showTheoryInModal('${theory.id}')">見る</button>
+                <button class="btn btn-secondary btn-small" onclick="toggleLearned('${theory.id}')">${toggleLabel}</button>
+                <button class="btn btn-warning btn-small" onclick="openEditModal('${theory.id}')">✏️</button>
+                <button class="btn btn-danger btn-small" onclick="deleteTheory('${theory.id}')">🗑️</button>
+            </div>
+        </div>
+    `;
+}
+
+function toggleLearned(theoryId) {
+    const theory = findTheoryById(theoryId);
+    if (!theory) return;
+    theory.learned = !theory.learned;
+    if (theory.learned && !theory.nextReview) theory.nextReview = getTodayString();
+    if (!theory.learned) theory.nextReview = null;
+    saveData();
+    updateAllDisplays();
+}
+
+function showTheoryInModal(theoryId) {
+    const allTheories = getAllTheories();
+    const theory = allTheories.find(t => t.id === theoryId);
+    if (!theory) return;
+    currentReviewList = [theory];
+    currentCardIndex = 0;
+    const modal = document.getElementById('card-modal');
+    document.getElementById('modal-card-content').innerHTML = createTheoryCard(theory, true);
+    modal.style.display = 'flex';
+    attachEvaluationButtons('modal-card-content');
+}
+
+function closeModal() {
+    document.getElementById('card-modal').style.display = 'none';
+    updateAllDisplays();
+}
+
+// ========================================
+// カレンダー
+// ========================================
+
+function updateCalendar() {
+    const year = calendarCurrentDate.getFullYear();
+    const month = calendarCurrentDate.getMonth();
+    document.getElementById('calendar-month').textContent = `${year}年${month + 1}月`;
+
+    const firstDay = new Date(year, month, 1);
+    const lastDay = new Date(year, month + 1, 0);
+    const daysInMonth = lastDay.getDate();
+    const adjustedFirstDay = firstDay.getDay() === 0 ? 6 : firstDay.getDay() - 1;
+
+    let html = '';
+    ['月', '火', '水', '木', '金', '土', '日'].forEach(day => {
+        html += `<div class="calendar-header">${day}</div>`;
+    });
+    for (let i = 0; i < adjustedFirstDay; i++) {
+        html += '<div class="calendar-day empty"></div>';
+    }
+    for (let day = 1; day <= daysInMonth; day++) {
+        const dateStr = formatDateISO(new Date(year, month, day));
+        const reviewCount = getTodayReviewList(dateStr).length;
+        const isToday = dateStr === getTodayString();
+        html += `
+            <div class="calendar-day ${isToday ? 'today' : ''} ${reviewCount > 0 ? 'has-review' : ''}" onclick="showCalendarDetail('${dateStr}')">
+                <div class="calendar-day-number">${day}</div>
+                ${reviewCount > 0 ? `<div class="calendar-day-count">${reviewCount}</div>` : ''}
+            </div>
+        `;
+    }
+    document.getElementById('calendar-grid').innerHTML = html;
+    document.getElementById('calendar-detail').style.display = 'none';
+}
+
+function showCalendarDetail(dateStr) {
+    const reviewList = getTodayReviewList(dateStr);
+    const detailContainer = document.getElementById('calendar-detail');
+
+    if (reviewList.length === 0) {
+        detailContainer.innerHTML = `
+            <div class="empty-state">
+                <div class="empty-state-icon">✅</div>
+                <div class="empty-state-title">${formatDateJP(dateStr)}</div>
+                <div class="empty-state-message">この日の復習予定はありません</div>
+            </div>
+        `;
+        detailContainer.style.display = 'block';
+        return;
+    }
+
+    currentReviewList = reviewList;
+    currentCardIndex = 0;
+    detailContainer.innerHTML = `
+        <h3 style="margin-bottom: 16px; color: var(--primary);">
+            ${formatDateJP(dateStr)} の復習予定（${reviewList.length}問）
+        </h3>
+        <div id="calendar-card-display"></div>
+    `;
+    displayCurrentCard('calendar-card-display');
+    detailContainer.style.display = 'block';
+    detailContainer.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// ========================================
+// 教材管理
+// ========================================
+
+function switchManagementMode(mode) {
+    document.querySelectorAll('.mode-btn').forEach(btn => btn.classList.remove('active'));
+    document.querySelector(`[data-mode="${mode}"]`).classList.add('active');
+    document.getElementById('individual-mode').style.display = 'none';
+    document.getElementById('bulk-mode').style.display = 'none';
+    document.getElementById('structure-mode').style.display = 'none';
+    document.getElementById('backup-mode').style.display = 'none';
+
+    if (mode === 'individual') document.getElementById('individual-mode').style.display = 'block';
+    else if (mode === 'bulk') document.getElementById('bulk-mode').style.display = 'block';
+    else if (mode === 'structure') { document.getElementById('structure-mode').style.display = 'block'; updateStructureList(); }
+    else if (mode === 'backup') { document.getElementById('backup-mode').style.display = 'block'; updateExportFilterCount(); }
+}
+
+function addTheory(continueAdding) {
+    const subjectName = document.getElementById('subject-name').value.trim();
+    const bookName = document.getElementById('book-name').value.trim();
+    const chapterName = document.getElementById('chapter-name').value.trim();
+    const questionText = document.getElementById('question-text').value.trim();
+    const answerText = document.getElementById('answer-text').value.trim();
+
+    if (!subjectName || !bookName || !chapterName || !questionText || !answerText) {
+        showToast('すべての項目を入力してください', 'warning');
+        return;
+    }
+
+    let subject = theoryData.subjects.find(s => s.name === subjectName);
+    if (!subject) { subject = { name: subjectName, active: true, books: [] }; theoryData.subjects.push(subject); }
+    let book = subject.books.find(b => b.name === bookName);
+    if (!book) { book = { name: bookName, chapters: [] }; subject.books.push(book); }
+    let chapter = book.chapters.find(c => c.name === chapterName);
+    if (!chapter) { chapter = { name: chapterName, theories: [] }; book.chapters.push(chapter); }
+
+    const registerAsLearned = document.getElementById('register-as-learned').checked;
+    chapter.theories.push({
+        id: generateId(),
+        questionText, answerText,
+        evaluation: "E",
+        nextReview: registerAsLearned ? getTodayString() : null,
+        learned: registerAsLearned
+    });
+    saveData();
+
+    const currentSubject = document.getElementById('subject-select').value;
+    const currentBook = document.getElementById('book-select').value;
+    if (currentSubject && currentSubject !== '__NEW__') {
+        updateBookSelector(currentSubject, 'individual');
+        if (currentBook && currentBook !== '__NEW__') updateChapterSelector(currentSubject, currentBook, 'individual');
+    }
+
+    if (continueAdding) {
+        document.getElementById('question-text').value = '';
+        document.getElementById('answer-text').value = '';
+        showToast('理論を追加しました', 'success');
+        document.getElementById('question-text').focus();
+    } else {
+        document.getElementById('subject-select').value = '';
+        document.getElementById('subject-name').value = '';
+        document.getElementById('book-select').value = '';
+        document.getElementById('book-select').disabled = true;
+        document.getElementById('book-name').value = '';
+        document.getElementById('chapter-select').value = '';
+        document.getElementById('chapter-select').disabled = true;
+        document.getElementById('chapter-name').value = '';
+        document.getElementById('question-text').value = '';
+        document.getElementById('answer-text').value = '';
+        showToast('理論を追加しました', 'success');
+        updateAllDisplays();
+    }
+}
+
+function bulkRegisterTheories() {
+    const subjectName = document.getElementById('bulk-subject-name').value.trim();
+    const bookName = document.getElementById('bulk-book-name').value.trim();
+    const chapterName = document.getElementById('bulk-chapter-name').value.trim();
+    const bulkText = document.getElementById('bulk-input').value.trim();
+
+    if (!subjectName || !bookName || !chapterName || !bulkText) {
+        showToast('すべての項目を入力してください', 'warning');
+        return;
+    }
+
+    const theories = parseBulkInput(bulkText);
+    if (theories.length === 0) { showToast('正しい形式で入力してください', 'warning'); return; }
+
+    let subject = theoryData.subjects.find(s => s.name === subjectName);
+    if (!subject) { subject = { name: subjectName, active: true, books: [] }; theoryData.subjects.push(subject); }
+    let book = subject.books.find(b => b.name === bookName);
+    if (!book) { book = { name: bookName, chapters: [] }; subject.books.push(book); }
+    let chapter = book.chapters.find(c => c.name === chapterName);
+    if (!chapter) { chapter = { name: chapterName, theories: [] }; book.chapters.push(chapter); }
+
+    const bulkRegisterAsLearned = document.getElementById('bulk-register-as-learned').checked;
+    theories.forEach(t => {
+        chapter.theories.push({
+            id: generateId(),
+            questionText: t.questionText,
+            answerText: t.answerText,
+            evaluation: "E",
+            nextReview: bulkRegisterAsLearned ? getTodayString() : null,
+            learned: bulkRegisterAsLearned
+        });
+    });
+    saveData();
+
+    const currentSubject = document.getElementById('bulk-subject-select').value;
+    const currentBook = document.getElementById('bulk-book-select').value;
+    if (currentSubject && currentSubject !== '__NEW__') {
+        updateBookSelector(currentSubject, 'bulk');
+        if (currentBook && currentBook !== '__NEW__') updateChapterSelector(currentSubject, currentBook, 'bulk');
+    }
+
+    document.getElementById('bulk-input').value = '';
+    showToast(`${theories.length}問の理論を登録しました`, 'success');
+    updateAllDisplays();
+}
+
+function parseBulkInput(text) {
+    const theories = [];
+    const problemBlocks = text.split(/\n---\n|^---\n|\n---$/).filter(block => block.trim());
+    for (const block of problemBlocks) {
+        const trimmedBlock = block.trim();
+        if (!trimmedBlock) continue;
+        let questionText = '', answerText = '';
+        if (trimmedBlock.includes('\n===\n')) {
+            const parts = trimmedBlock.split('\n===\n');
+            questionText = parts[0].trim();
+            answerText = parts.slice(1).join('\n===\n').trim();
+        } else {
+            const parts = trimmedBlock.split(/\n\s*\n/);
+            if (parts.length >= 2) {
+                questionText = parts[0].trim();
+                answerText = parts.slice(1).join('\n\n').trim();
+            } else {
+                questionText = trimmedBlock.trim();
+            }
+        }
+        if (questionText) theories.push({ questionText, answerText });
+    }
+    return theories;
+}
+
+// ========================================
+// 表示更新
+// ========================================
+
+function updateAllDisplays() {
+    switch(currentDisplayMode) {
+        case 'today-review': updateTodayReview(); break;
+        case 'all-theories': updateAllTheoriesList(); break;
+        case 'calendar': updateCalendar(); break;
+    }
+    updateUndoBar();
+}
+
+// ========================================
+// 編集・削除
+// ========================================
+
+function openEditModal(theoryId) {
+    const allTheories = getAllTheories();
+    const theory = allTheories.find(t => t.id === theoryId);
+    if (!theory) { showToast('理論が見つかりません', 'error'); return; }
+
+    document.getElementById('edit-theory-id').value = theory.id;
+    document.getElementById('edit-subject-name').value = theory.subjectName;
+    document.getElementById('edit-book-name').value = theory.bookName;
+    document.getElementById('edit-chapter-name').value = theory.chapterName;
+    document.getElementById('edit-question-text').value = theory.questionText;
+    document.getElementById('edit-answer-text').value = theory.answerText;
+    document.getElementById('edit-modal').style.display = 'flex';
+}
+
+function closeEditModal() {
+    document.getElementById('edit-modal').style.display = 'none';
+}
+
+function saveEditedTheory() {
+    const theoryId = document.getElementById('edit-theory-id').value;
+    const questionText = document.getElementById('edit-question-text').value.trim();
+    const answerText = document.getElementById('edit-answer-text').value.trim();
+
+    if (!questionText || !answerText) { showToast('問題文と解答を入力してください', 'warning'); return; }
+
+    const originalTheory = findTheoryById(theoryId);
+    if (!originalTheory) { showToast('理論が見つかりません', 'error'); return; }
+
+    originalTheory.questionText = questionText;
+    originalTheory.answerText = answerText;
+    saveData();
+    closeEditModal();
+    if (currentDisplayMode === 'today-review') preserveTheoryId = theoryId;
+    updateAllDisplays();
+    updateStructureList();
+    showToast('理論を更新しました', 'success');
+}
+
+function deleteTheory(theoryId) {
+    if (!confirm('この理論を削除しますか？')) return;
+    let deleted = false;
+    for (let subject of theoryData.subjects) {
+        for (let book of subject.books) {
+            for (let chapter of book.chapters) {
+                const index = chapter.theories.findIndex(t => t.id === theoryId);
+                if (index !== -1) { chapter.theories.splice(index, 1); deleted = true; break; }
+            }
+            if (deleted) break;
+        }
+        if (deleted) break;
+    }
+    if (deleted) { saveData(); updateAllDisplays(); showToast('削除しました', 'info'); }
+}
+
+// ========================================
+// 教材構造管理
+// ========================================
+
+function openStructureEditModal(type, index, parentIndex = null, grandparentIndex = null) {
+    let currentName = '', labelText = '';
+    if (type === 'subject') { currentName = theoryData.subjects[index].name; labelText = '科目名:'; }
+    else if (type === 'book') { currentName = theoryData.subjects[parentIndex].books[index].name; labelText = '問題集名:'; }
+    else if (type === 'chapter') { currentName = theoryData.subjects[grandparentIndex].books[parentIndex].chapters[index].name; labelText = '単元名:'; }
+
+    document.getElementById('structure-edit-type').value = type;
+    document.getElementById('structure-edit-index').value = index;
+    document.getElementById('structure-edit-parent-index').value = parentIndex !== null ? parentIndex : '';
+    document.getElementById('structure-edit-grandparent-index').value = grandparentIndex !== null ? grandparentIndex : '';
+    document.getElementById('structure-edit-label').textContent = labelText;
+    document.getElementById('structure-edit-name').value = currentName;
+    document.getElementById('structure-edit-modal').style.display = 'flex';
+}
+
+function closeStructureEditModal() {
+    document.getElementById('structure-edit-modal').style.display = 'none';
+}
+
+function saveStructureEdit() {
+    const type = document.getElementById('structure-edit-type').value;
+    const index = parseInt(document.getElementById('structure-edit-index').value);
+    const parentIndex = document.getElementById('structure-edit-parent-index').value;
+    const grandparentIndex = document.getElementById('structure-edit-grandparent-index').value;
+    const newName = document.getElementById('structure-edit-name').value.trim();
+    if (!newName) { showToast('名称を入力してください', 'warning'); return; }
+
+    if (type === 'subject') theoryData.subjects[index].name = newName;
+    else if (type === 'book') theoryData.subjects[parseInt(parentIndex)].books[index].name = newName;
+    else if (type === 'chapter') theoryData.subjects[parseInt(grandparentIndex)].books[parseInt(parentIndex)].chapters[index].name = newName;
+
+    saveData();
+    closeStructureEditModal();
+    updateStructureList();
+    updateAllDisplays();
+    showToast('名称を更新しました', 'success');
+}
+
+function deleteStructure(type, index, parentIndex = null, grandparentIndex = null) {
+    let itemName = '', theoryCount = 0;
+    if (type === 'subject') {
+        itemName = theoryData.subjects[index].name;
+        theoryCount = countTheories(theoryData.subjects[index]);
+    } else if (type === 'book') {
+        itemName = theoryData.subjects[parentIndex].books[index].name;
+        theoryCount = theoryData.subjects[parentIndex].books[index].chapters.reduce((s, c) => s + c.theories.length, 0);
+    } else if (type === 'chapter') {
+        itemName = theoryData.subjects[grandparentIndex].books[parentIndex].chapters[index].name;
+        theoryCount = theoryData.subjects[grandparentIndex].books[parentIndex].chapters[index].theories.length;
+    }
+    if (!confirm(`「${itemName}」を削除しますか？\n(${theoryCount}問の理論も削除されます)`)) return;
+
+    if (type === 'subject') theoryData.subjects.splice(index, 1);
+    else if (type === 'book') theoryData.subjects[parentIndex].books.splice(index, 1);
+    else if (type === 'chapter') theoryData.subjects[grandparentIndex].books[parentIndex].chapters.splice(index, 1);
+
+    saveData();
+    updateStructureList();
+    updateAllDisplays();
+    showToast('削除しました', 'info');
+}
+
+function updateStructureList() {
+    const container = document.getElementById('structure-list');
+    if (!container) return;
+    const breadcrumb = document.getElementById('breadcrumb-path');
+
+    if (currentStructurePath.length === 0) {
+        breadcrumb.textContent = 'トップ';
+        let html = '';
+        theoryData.subjects.forEach((subject, i) => {
+            const count = countTheories(subject);
+            const activeLabel = subject.active === false ? ' <small style="color:#95a5a6;">(休止中)</small>' : '';
+            html += `
+                <div class="structure-item" style="padding: 15px; margin-bottom: 10px; background: var(--bg-surface); border-radius: var(--radius-sm); display: flex; justify-content: space-between; align-items: center;">
+                    <div onclick="navigateToSubject('${subject.name}')" style="flex: 1; cursor: pointer; display: flex; align-items: center; gap: 10px;">
+                        <span style="font-size: 1.3rem;">📚</span>
+                        <span style="font-weight: 600;">${subject.name}${activeLabel}</span>
+                        <span style="color: var(--text-light); font-size: 0.85rem;">${count}問</span>
+                    </div>
+                    <button class="btn btn-warning btn-small" onclick="openStructureEditModal('subject', ${i})">✏️</button>
+                </div>`;
+        });
+        container.innerHTML = html;
+    } else if (currentStructurePath.length === 1) {
+        const subjectName = currentStructurePath[0];
+        const subject = theoryData.subjects.find(s => s.name === subjectName);
+        if (!subject) return;
+        breadcrumb.innerHTML = `<a href="#" onclick="navigateToTop(); return false;" style="color: var(--accent);">トップ</a> / ${subjectName}`;
+        let html = '<div style="margin-bottom: 16px;"><button class="btn btn-secondary btn-small" onclick="navigateToTop()">⬅️ 戻る</button></div>';
+        const si = theoryData.subjects.findIndex(s => s.name === subjectName);
+        subject.books.forEach((book, bi) => {
+            const count = book.chapters.reduce((s, c) => s + c.theories.length, 0);
+            html += `
+                <div class="structure-item" style="padding: 15px; margin-bottom: 10px; background: var(--bg-surface); border-radius: var(--radius-sm); display: flex; justify-content: space-between; align-items: center;">
+                    <div onclick="navigateToBook('${book.name}')" style="flex: 1; cursor: pointer; display: flex; align-items: center; gap: 10px;">
+                        <span style="font-size: 1.3rem;">📖</span>
+                        <span style="font-weight: 600;">${book.name}</span>
+                        <span style="color: var(--text-light); font-size: 0.85rem;">${count}問</span>
+                    </div>
+                    <button class="btn btn-warning btn-small" onclick="openStructureEditModal('book', ${bi}, ${si})">✏️</button>
+                </div>`;
+        });
+        container.innerHTML = html;
+    } else if (currentStructurePath.length === 2) {
+        const [subjectName, bookName] = currentStructurePath;
+        const subject = theoryData.subjects.find(s => s.name === subjectName);
+        if (!subject) return;
+        const book = subject.books.find(b => b.name === bookName);
+        if (!book) return;
+        breadcrumb.innerHTML = `<a href="#" onclick="navigateToTop(); return false;" style="color: var(--accent);">トップ</a> / <a href="#" onclick="navigateToSubject('${subjectName}'); return false;" style="color: var(--accent);">${subjectName}</a> / ${bookName}`;
+        let html = '<div style="margin-bottom: 16px;"><button class="btn btn-secondary btn-small" onclick="navigateBack()">⬅️ 戻る</button></div>';
+        const si = theoryData.subjects.findIndex(s => s.name === subjectName);
+        const bi = subject.books.findIndex(b => b.name === bookName);
+        book.chapters.forEach((chapter, ci) => {
+            html += `
+                <div class="structure-item" style="padding: 15px; margin-bottom: 10px; background: var(--bg-surface); border-radius: var(--radius-sm); display: flex; justify-content: space-between; align-items: center;">
+                    <div onclick="navigateToChapter('${chapter.name}')" style="flex: 1; cursor: pointer; display: flex; align-items: center; gap: 10px;">
+                        <span style="font-size: 1.3rem;">📑</span>
+                        <span style="font-weight: 600;">${chapter.name}</span>
+                        <span style="color: var(--text-light); font-size: 0.85rem;">${chapter.theories.length}問</span>
+                    </div>
+                    <button class="btn btn-warning btn-small" onclick="openStructureEditModal('chapter', ${ci}, ${bi}, ${si})">✏️</button>
+                </div>`;
+        });
+        container.innerHTML = html;
+    } else if (currentStructurePath.length === 3) {
+        const [subjectName, bookName, chapterName] = currentStructurePath;
+        const subject = theoryData.subjects.find(s => s.name === subjectName);
+        if (!subject) return;
+        const book = subject.books.find(b => b.name === bookName);
+        if (!book) return;
+        const chapter = book.chapters.find(c => c.name === chapterName);
+        if (!chapter) return;
+        breadcrumb.innerHTML = `<a href="#" onclick="navigateToTop(); return false;" style="color: var(--accent);">トップ</a> / <a href="#" onclick="navigateToSubject('${subjectName}'); return false;" style="color: var(--accent);">${subjectName}</a> / <a href="#" onclick="navigateToBook('${bookName}'); return false;" style="color: var(--accent);">${bookName}</a> / ${chapterName}`;
+        let html = '<div style="margin-bottom: 16px;"><button class="btn btn-secondary btn-small" onclick="navigateBack()">⬅️ 戻る</button></div>';
+        chapter.theories.forEach((theory, index) => {
+            const preview = theory.questionText.substring(0, 50) + (theory.questionText.length > 50 ? '...' : '');
+            html += `
+                <div class="structure-item" style="padding: 15px; margin-bottom: 10px; background: white; border: 1px solid var(--border-color); border-radius: var(--radius-sm);">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                        <div style="flex: 1;">
+                            <div style="font-weight: 600; color: var(--primary); font-size: 0.85rem;">問題 ${index + 1}</div>
+                            <div style="color: var(--text-light); font-size: 0.85rem; line-height: 1.4;">${preview}</div>
+                        </div>
+                        <span class="eval-badge eval-${theory.evaluation.toLowerCase()}">${theory.evaluation}</span>
+                    </div>
+                    <div style="display: flex; gap: 8px;">
+                        <button class="btn btn-primary btn-small" style="flex: 1;" onclick="editTheoryFromStructure('${theory.id}')">✏️ 編集</button>
+                        <button class="btn btn-warning btn-small" style="flex: 1;" onclick="openMoveModal('${theory.id}')">📦 移動</button>
+                        <button class="btn btn-danger btn-small" style="flex: 1;" onclick="deleteTheoryFromStructure('${theory.id}')">🗑️</button>
+                    </div>
+                </div>`;
+        });
+        container.innerHTML = html;
+    }
+}
+
+function navigateToTop() { currentStructurePath = []; updateStructureList(); }
+function navigateBack() { currentStructurePath.pop(); updateStructureList(); }
+function navigateToSubject(name) { currentStructurePath = [name]; updateStructureList(); }
+function navigateToBook(name) { currentStructurePath.push(name); updateStructureList(); }
+function navigateToChapter(name) { currentStructurePath.push(name); updateStructureList(); }
+function countTheories(subject) { let c = 0; subject.books.forEach(b => b.chapters.forEach(ch => c += ch.theories.length)); return c; }
+function editTheoryFromStructure(id) { openEditModal(id); }
+function deleteTheoryFromStructure(id) { if (!confirm('この理論を削除しますか？')) return; deleteTheory(id); updateStructureList(); }
+
+// ========================================
+// 問題移動
+// ========================================
+
+function openMoveModal(theoryId) {
+    const theory = findTheoryById(theoryId);
+    if (!theory) return;
+    document.getElementById('move-theory-id').value = theoryId;
+    const preview = theory.questionText.substring(0, 80) + (theory.questionText.length > 80 ? '...' : '');
+    document.getElementById('move-theory-preview').innerHTML = `<strong>移動する問題：</strong><br>${preview.replace(/\n/g, '<br>')}`;
+    const subjectSelect = document.getElementById('move-subject-select');
+    subjectSelect.innerHTML = '<option value="">-- 科目を選択 --</option>';
+    theoryData.subjects.forEach(s => { const o = document.createElement('option'); o.value = s.name; o.textContent = s.name; subjectSelect.appendChild(o); });
+    document.getElementById('move-book-select').innerHTML = '<option value="">-- 問題集を選択 --</option>';
+    document.getElementById('move-book-select').disabled = true;
+    document.getElementById('move-chapter-select').innerHTML = '<option value="">-- 単元を選択 --</option>';
+    document.getElementById('move-chapter-select').disabled = true;
+    document.getElementById('move-modal').style.display = 'flex';
+}
+
+function closeMoveModal() { document.getElementById('move-modal').style.display = 'none'; }
+
+function onMoveSubjectChange(value) {
+    const bookSelect = document.getElementById('move-book-select');
+    const chapterSelect = document.getElementById('move-chapter-select');
+    bookSelect.innerHTML = '<option value="">-- 問題集を選択 --</option>';
+    chapterSelect.innerHTML = '<option value="">-- 単元を選択 --</option>';
+    chapterSelect.disabled = true;
+    if (!value) { bookSelect.disabled = true; return; }
+    const subject = theoryData.subjects.find(s => s.name === value);
+    if (!subject) return;
+    subject.books.forEach(b => { const o = document.createElement('option'); o.value = b.name; o.textContent = b.name; bookSelect.appendChild(o); });
+    bookSelect.disabled = false;
+}
+
+function onMoveBookChange(value) {
+    const subjectName = document.getElementById('move-subject-select').value;
+    const chapterSelect = document.getElementById('move-chapter-select');
+    chapterSelect.innerHTML = '<option value="">-- 単元を選択 --</option>';
+    if (!value || !subjectName) { chapterSelect.disabled = true; return; }
+    const subject = theoryData.subjects.find(s => s.name === subjectName);
+    const book = subject && subject.books.find(b => b.name === value);
+    if (!book) return;
+    book.chapters.forEach(ch => { const o = document.createElement('option'); o.value = ch.name; o.textContent = ch.name; chapterSelect.appendChild(o); });
+    chapterSelect.disabled = false;
+}
+
+function saveTheoryMove() {
+    const theoryId = document.getElementById('move-theory-id').value;
+    const targetSubjectName = document.getElementById('move-subject-select').value;
+    const targetBookName = document.getElementById('move-book-select').value;
+    const targetChapterName = document.getElementById('move-chapter-select').value;
+    if (!targetSubjectName || !targetBookName || !targetChapterName) { showToast('移動先を選択してください', 'warning'); return; }
+
+    let theory = null, sourceChapter = null;
+    for (const subject of theoryData.subjects) {
+        for (const book of subject.books) {
+            for (const chapter of book.chapters) {
+                const idx = chapter.theories.findIndex(t => t.id === theoryId);
+                if (idx !== -1) { theory = chapter.theories.splice(idx, 1)[0]; sourceChapter = chapter; break; }
+            }
+            if (theory) break;
+        }
+        if (theory) break;
+    }
+    if (!theory) { showToast('問題が見つかりません', 'error'); return; }
+
+    const targetSubject = theoryData.subjects.find(s => s.name === targetSubjectName);
+    const targetBook = targetSubject && targetSubject.books.find(b => b.name === targetBookName);
+    const targetChapter = targetBook && targetBook.chapters.find(c => c.name === targetChapterName);
+    if (!targetChapter) { sourceChapter.theories.push(theory); showToast('移動先が見つかりません', 'error'); return; }
+    if (targetChapter === sourceChapter) { sourceChapter.theories.push(theory); showToast('移動元と同じです', 'warning'); return; }
+
+    targetChapter.theories.push(theory);
+    saveData();
+    closeMoveModal();
+    updateStructureList();
+    updateAllDisplays();
+    showToast(`「${targetChapterName}」に移動しました`, 'success');
+}
+
+// ========================================
+// セレクター
+// ========================================
+
+function updateSubjectSelectors() {
+    const subjects = theoryData.subjects.map(s => s.name);
+    updateSelector('subject-select', subjects);
+    updateSelector('bulk-subject-select', subjects);
+}
+
+function updateBookSelector(subjectName, mode) {
+    const prefix = mode === 'bulk' ? 'bulk-' : '';
+    const subject = theoryData.subjects.find(s => s.name === subjectName);
+    if (!subject) {
+        document.getElementById(prefix + 'book-select').disabled = true;
+        document.getElementById(prefix + 'book-select').innerHTML = '<option value="">-- 問題集を選択 --</option>';
+        document.getElementById(prefix + 'chapter-select').disabled = true;
+        document.getElementById(prefix + 'chapter-select').innerHTML = '<option value="">-- 単元を選択 --</option>';
+        return;
+    }
+    updateSelector(prefix + 'book-select', subject.books.map(b => b.name));
+    document.getElementById(prefix + 'book-select').disabled = false;
+    document.getElementById(prefix + 'chapter-select').disabled = true;
+    document.getElementById(prefix + 'chapter-select').innerHTML = '<option value="">-- 単元を選択 --</option>';
+}
+
+function updateChapterSelector(subjectName, bookName, mode) {
+    const prefix = mode === 'bulk' ? 'bulk-' : '';
+    const subject = theoryData.subjects.find(s => s.name === subjectName);
+    if (!subject) return;
+    const book = subject.books.find(b => b.name === bookName);
+    if (!book) { document.getElementById(prefix + 'chapter-select').disabled = true; return; }
+    updateSelector(prefix + 'chapter-select', book.chapters.map(c => c.name));
+    document.getElementById(prefix + 'chapter-select').disabled = false;
+}
+
+function updateSelector(selectId, items) {
+    const select = document.getElementById(selectId);
+    const currentValue = select.value;
+    select.innerHTML = '<option value="">-- 選択 --</option>';
+    items.forEach(item => { const o = document.createElement('option'); o.value = item; o.textContent = item; select.appendChild(o); });
+    const newOption = document.createElement('option');
+    newOption.value = '__NEW__';
+    newOption.textContent = '➕ 新規作成...';
+    select.appendChild(newOption);
+    if (items.includes(currentValue)) select.value = currentValue;
+}
+
+function onSubjectSelectChange(value, mode) {
+    const prefix = mode === 'bulk' ? 'bulk-' : '';
+    const subjectInput = document.getElementById(prefix + 'subject-name');
+    const bookSelect = document.getElementById(prefix + 'book-select');
+    const bookInput = document.getElementById(prefix + 'book-name');
+    const chapterSelect = document.getElementById(prefix + 'chapter-select');
+    const chapterInput = document.getElementById(prefix + 'chapter-name');
+
+    if (value === '__NEW__') {
+        subjectInput.style.display = 'block'; subjectInput.value = ''; subjectInput.focus();
+        bookSelect.disabled = true; bookSelect.innerHTML = '<option value="">-- 問題集を選択 --</option>';
+        bookInput.style.display = 'block'; bookInput.value = '';
+        chapterSelect.disabled = true; chapterSelect.innerHTML = '<option value="">-- 単元を選択 --</option>';
+        chapterInput.style.display = 'block'; chapterInput.value = '';
+    } else if (value) {
+        subjectInput.style.display = 'none'; subjectInput.value = value;
+        updateBookSelector(value, mode);
+        bookInput.style.display = 'none'; bookInput.value = '';
+        chapterInput.style.display = 'none'; chapterInput.value = '';
+    } else {
+        subjectInput.style.display = 'none'; subjectInput.value = '';
+        bookSelect.disabled = true; bookInput.style.display = 'none'; bookInput.value = '';
+        chapterSelect.disabled = true; chapterInput.style.display = 'none'; chapterInput.value = '';
+    }
+}
+
+function onBookSelectChange(value, mode) {
+    const prefix = mode === 'bulk' ? 'bulk-' : '';
+    const subjectSelect = document.getElementById(prefix + 'subject-select');
+    const subjectInput = document.getElementById(prefix + 'subject-name');
+    const bookInput = document.getElementById(prefix + 'book-name');
+    const chapterSelect = document.getElementById(prefix + 'chapter-select');
+    const chapterInput = document.getElementById(prefix + 'chapter-name');
+    const subjectName = subjectSelect.value === '__NEW__' ? subjectInput.value.trim() : subjectSelect.value;
+
+    if (value === '__NEW__') {
+        bookInput.style.display = 'block'; bookInput.value = ''; bookInput.focus();
+        chapterSelect.disabled = true; chapterSelect.innerHTML = '<option value="">-- 単元を選択 --</option>';
+        chapterInput.style.display = 'block'; chapterInput.value = '';
+    } else if (value) {
+        bookInput.style.display = 'none'; bookInput.value = value;
+        updateChapterSelector(subjectName, value, mode);
+        chapterInput.style.display = 'none'; chapterInput.value = '';
+    } else {
+        bookInput.style.display = 'none'; bookInput.value = '';
+        chapterSelect.disabled = true; chapterInput.style.display = 'none'; chapterInput.value = '';
+    }
+}
+
+function onChapterSelectChange(value, mode) {
+    const prefix = mode === 'bulk' ? 'bulk-' : '';
+    const chapterInput = document.getElementById(prefix + 'chapter-name');
+    if (value === '__NEW__') { chapterInput.style.display = 'block'; chapterInput.value = ''; chapterInput.focus(); }
+    else if (value) { chapterInput.style.display = 'none'; chapterInput.value = value; }
+    else { chapterInput.style.display = 'none'; chapterInput.value = ''; }
+}
+
+// ========================================
+// 設定・トグル
+// ========================================
+
+function resetAllEvaluations() {
+    if (!confirm('すべての理論の評価を「E」にリセットしますか？\nこの操作は取り消せません。')) return;
+    const today = getTodayString();
+    let count = 0;
+    theoryData.subjects.forEach(s => s.books.forEach(b => b.chapters.forEach(c => c.theories.forEach(t => {
+        t.evaluation = 'E'; t.nextReview = today; count++;
+    }))));
+    saveData();
+    updateAllDisplays();
+    showToast(`${count}問をEにリセットしました`, 'info');
+}
+
+function bulkUnlearnByEvaluation(evalGrade) {
+    let count = 0;
+    theoryData.subjects.forEach(s => s.books.forEach(b => b.chapters.forEach(c => c.theories.forEach(t => {
+        if (t.evaluation === evalGrade && t.learned !== false) count++;
+    }))));
+    if (count === 0) { showToast(`${evalGrade}評価の既習理論はありません`, 'info'); return; }
+    if (!confirm(`${evalGrade}評価の既習理論 ${count}問 を未習にしますか？`)) return;
+    theoryData.subjects.forEach(s => s.books.forEach(b => b.chapters.forEach(c => c.theories.forEach(t => {
+        if (t.evaluation === evalGrade && t.learned !== false) { t.learned = false; t.nextReview = null; }
+    }))));
+    saveData();
+    updateAllDisplays();
+    showToast(`${count}問を未習にしました`, 'success');
+}
+
+function toggleRandomOrder() {
+    isRandomOrder = !isRandomOrder;
+    const btn = document.getElementById('toggle-random-btn');
+    if (isRandomOrder) { btn.textContent = '🔀 ランダム: ON'; btn.classList.remove('btn-secondary'); btn.classList.add('btn-success'); }
+    else { btn.textContent = '🔀 ランダム'; btn.classList.remove('btn-success'); btn.classList.add('btn-secondary'); }
+    updateTodayReview();
+}
+
+function toggleAnswerVisibility() {
+    isAnswerVisible = !isAnswerVisible;
+    const btn = document.getElementById('toggle-answer-btn');
+    const answerSection = document.getElementById('answer-section-display');
+    if (isAnswerVisible) { btn.textContent = '🙈 非表示'; if (answerSection) answerSection.style.display = 'block'; }
+    else { btn.textContent = '👁️ 回答表示'; if (answerSection) answerSection.style.display = 'none'; }
+}
+
+function toggleBtnSettingsPanel() {
+    const panel = document.getElementById('btn-settings-panel');
+    panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+    if (panel.style.display !== 'none') initButtonSettings();
+}
+
+function setEvalMode(mode) {
+    evalMode = mode;
+    localStorage.setItem('evalMode', mode);
+    document.getElementById('eval-mode-simple-btn').className = 'btn btn-small ' + (mode === 'simple' ? 'btn-primary' : 'btn-secondary');
+    document.getElementById('eval-mode-detail-btn').className = 'btn btn-small ' + (mode === 'detail' ? 'btn-primary' : 'btn-secondary');
+    if (currentDisplayMode === 'today-review') { preserveTheoryId = currentReviewList[currentCardIndex]?.id || null; updateTodayReview(); }
+}
+
+function setBtnSize(size) {
+    evalBtnSize = size;
+    localStorage.setItem('evalBtnSize', size);
+    document.getElementById('btn-size-small-btn').className = 'btn btn-small ' + (size === 'small' ? 'btn-primary' : 'btn-secondary');
+    document.getElementById('btn-size-large-btn').className = 'btn btn-small ' + (size === 'large' ? 'btn-primary' : 'btn-secondary');
+    if (currentDisplayMode === 'today-review') { preserveTheoryId = currentReviewList[currentCardIndex]?.id || null; updateTodayReview(); }
+}
+
+function setIncorrectMode(mode) {
+    incorrectMode = mode;
+    localStorage.setItem('incorrectMode', mode);
+    initIncorrectModeButtons();
+}
+
+function initIncorrectModeButtons() {
+    const modes = ['strict', 'normal', 'gentle'];
+    modes.forEach(m => {
+        const btn = document.getElementById('incorrect-mode-' + m);
+        if (btn) btn.className = 'btn btn-small ' + (incorrectMode === m ? 'btn-primary' : 'btn-secondary');
+    });
+}
+
+function initButtonSettings() {
+    document.getElementById('eval-mode-simple-btn').className = 'btn btn-small ' + (evalMode === 'simple' ? 'btn-primary' : 'btn-secondary');
+    document.getElementById('eval-mode-detail-btn').className = 'btn btn-small ' + (evalMode === 'detail' ? 'btn-primary' : 'btn-secondary');
+    document.getElementById('btn-size-small-btn').className = 'btn btn-small ' + (evalBtnSize === 'small' ? 'btn-primary' : 'btn-secondary');
+    document.getElementById('btn-size-large-btn').className = 'btn btn-small ' + (evalBtnSize === 'large' ? 'btn-primary' : 'btn-secondary');
+    initIncorrectModeButtons();
+}
+
+function updateUndoBar() {
+    const btn = document.getElementById('undo-eval-btn');
+    if (!btn) return;
+    if (lastEvalAction && currentDisplayMode === 'today-review') {
+        const theory = findTheoryById(lastEvalAction.theoryId);
+        if (theory) { btn.disabled = false; btn.textContent = '↩️ 戻る'; return; }
+    }
+    btn.disabled = true;
+    btn.textContent = '↩️ 戻る';
+}
+
+function shuffleArray(array) {
+    for (let i = array.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [array[i], array[j]] = [array[j], array[i]];
+    }
+    return array;
+}
+
+// ========================================
+// 今日の不正解復習
+// ========================================
+
+function displayIncorrectReview() {
+    const container = document.getElementById('incorrect-review-content');
+    const totalEl = document.getElementById('incorrect-total');
+    todayIncorrectList.forEach(item => {
+        const theory = findTheoryById(item.theoryId);
+        if (theory) item.evaluation = theory.evaluation;
+    });
+    totalEl.textContent = todayIncorrectList.length;
+
+    if (todayIncorrectList.length === 0) {
+        container.innerHTML = `
+            <div class="empty-state">
+                <div class="empty-state-icon">✨</div>
+                <div class="empty-state-title">不正解の問題はありません</div>
+                <div class="empty-state-message">今日の復習で評価が上がらなかった問題がここに表示されます。</div>
+            </div>
+        `;
+        return;
+    }
+
+    if (incorrectCardIndex >= todayIncorrectList.length) incorrectCardIndex = 0;
+    const item = todayIncorrectList[incorrectCardIndex];
+    const theory = findTheoryById(item.theoryId);
+    const currentEval = theory ? theory.evaluation : item.evaluation;
+
+    container.innerHTML = `
+        <div class="theory-card">
+            <div class="card-header">
+                <div class="card-path">${item.subjectName} &gt; ${item.bookName} &gt; ${item.chapterName}</div>
+                <div class="card-number">No.${incorrectCardIndex + 1} / ${todayIncorrectList.length}</div>
+            </div>
+            <div class="question-section">
+                <h4>【問題】</h4>
+                <p>${formatQuestionText(item)}</p>
+            </div>
+            <div class="answer-section">
+                <h4>【解答】</h4>
+                <p>${formatAnswerText(item.answerText)}</p>
+            </div>
+            <div class="card-info">
+                <div class="current-eval">
+                    現在：<span class="eval-badge eval-${currentEval.toLowerCase()}">${currentEval}</span>
+                </div>
+            </div>
+            <div style="display: flex; gap: 8px; margin-top: 12px;">
+                <button class="btn btn-secondary" style="flex: 1;" onclick="incorrectCardIndex = Math.max(0, incorrectCardIndex - 1); displayIncorrectReview();">◀ 前</button>
+                <button class="btn btn-primary" style="flex: 1;" onclick="incorrectCardIndex++; displayIncorrectReview();">次 ▶</button>
+            </div>
+        </div>
+    `;
+}
+
+// ========================================
+// CSV エクスポート / インポート
+// ========================================
+
+function escapeCSVField(value) {
+    const str = String(value == null ? '' : value);
+    if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) return '"' + str.replace(/"/g, '""') + '"';
+    return str;
+}
+
+function setExportFilter(evaluations) {
+    document.querySelectorAll('.export-eval-filter').forEach(cb => cb.checked = evaluations.includes(cb.value));
+    updateExportFilterCount();
+}
+
+function updateExportFilterCount() {
+    const selected = getSelectedExportEvaluations();
+    let count = 0;
+    theoryData.subjects.forEach(s => s.books.forEach(b => b.chapters.forEach(c => c.theories.forEach(t => {
+        if (selected.includes(t.evaluation || 'E')) count++;
+    }))));
+    const el = document.getElementById('export-filter-count');
+    if (el) el.textContent = `対象: ${count}問`;
+}
+
+function getSelectedExportEvaluations() {
+    return Array.from(document.querySelectorAll('.export-eval-filter:checked')).map(cb => cb.value);
+}
+
+function exportCSV() {
+    if (theoryData.subjects.length === 0) { showToast('データがありません', 'warning'); return; }
+    const selectedEvals = getSelectedExportEvaluations();
+    if (selectedEvals.length === 0) { showToast('評価を選択してください', 'warning'); return; }
+
+    const headers = ['科目', '問題集', '単元', '問題文', '解答', '評価', '次回復習日', '習得状態'];
+    const rows = [headers];
+    theoryData.subjects.forEach(subject => subject.books.forEach(book => book.chapters.forEach(chapter => chapter.theories.forEach(theory => {
+        const ev = theory.evaluation || 'E';
+        if (selectedEvals.includes(ev)) {
+            rows.push([subject.name, book.name, chapter.name, theory.questionText, theory.answerText, ev, theory.nextReview || '', theory.learned === false ? '未習' : '既習']);
+        }
+    }))));
+
+    if (rows.length <= 1) { showToast('該当する問題がありません', 'warning'); return; }
+
+    const csvContent = rows.map(row => row.map(escapeCSVField).join(',')).join('\r\n');
+    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const filterLabel = selectedEvals.length === 5 ? 'all' : selectedEvals.join('');
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `anki_master_${filterLabel}_${getTodayString()}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    showToast(`${rows.length - 1}問をエクスポートしました`, 'success');
+}
+
+function parseCSV(text) {
+    const rows = [];
+    let row = [], field = '', inQuotes = false;
+    for (let i = 0; i < text.length; i++) {
+        const ch = text[i], next = text[i + 1];
+        if (inQuotes) {
+            if (ch === '"' && next === '"') { field += '"'; i++; }
+            else if (ch === '"') inQuotes = false;
+            else field += ch;
+        } else {
+            if (ch === '"') inQuotes = true;
+            else if (ch === ',') { row.push(field); field = ''; }
+            else if (ch === '\r' && next === '\n') { row.push(field); field = ''; rows.push(row); row = []; i++; }
+            else if (ch === '\n') { row.push(field); field = ''; rows.push(row); row = []; }
+            else field += ch;
+        }
+    }
+    if (row.length > 0 || field !== '') { row.push(field); rows.push(row); }
+    if (rows.length > 0 && rows[rows.length - 1].every(f => f === '')) rows.pop();
+    return rows;
+}
+
+function importCSV(file) {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        try {
+            let text = e.target.result;
+            if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+            const rows = parseCSV(text);
+            if (rows.length < 2) { showToast('データが見つかりません', 'error'); return; }
+            const header = rows[0];
+            if (header[0] !== '科目' || header[3] !== '問題文') { showToast('CSVフォーマットが不正です', 'error'); return; }
+            const dataRows = rows.slice(1).filter(row => row.some(f => f.trim() !== ''));
+            const importMode = document.querySelector('input[name="csv-import-mode"]:checked').value;
+            if (!confirm(`【${importMode === 'replace' ? '完全置き換え' : '追加'}】${dataRows.length}行をインポートしますか？`)) return;
+            if (importMode === 'replace') theoryData = { subjects: [] };
+
+            const today = getTodayString();
+            let addedCount = 0, skippedCount = 0;
+            dataRows.forEach(row => {
+                const subjectName = (row[0] || '').trim(), bookName = (row[1] || '').trim(), chapterName = (row[2] || '').trim();
+                const questionText = (row[3] || '').trim(), answerText = (row[4] || '').trim();
+                const evaluation = (row[5] || '').trim().toUpperCase(), nextReview = (row[6] || '').trim();
+                if (!subjectName || !bookName || !chapterName || !questionText) { skippedCount++; return; }
+
+                let subject = theoryData.subjects.find(s => s.name === subjectName);
+                if (!subject) { subject = { name: subjectName, active: true, books: [] }; theoryData.subjects.push(subject); }
+                let book = subject.books.find(b => b.name === bookName);
+                if (!book) { book = { name: bookName, chapters: [] }; subject.books.push(book); }
+                let chapter = book.chapters.find(c => c.name === chapterName);
+                if (!chapter) { chapter = { name: chapterName, theories: [] }; book.chapters.push(chapter); }
+
+                if (importMode === 'merge' && chapter.theories.some(t => t.questionText === questionText)) { skippedCount++; return; }
+
+                const validEval = ['S', 'A', 'B', 'C', 'D', 'E'].includes(evaluation) ? evaluation : 'E';
+                const learnedStatus = (row[7] || '').trim();
+                const isLearned = learnedStatus !== '未習';
+                chapter.theories.push({
+                    id: generateId(), questionText, answerText, evaluation: validEval,
+                    nextReview: isLearned ? (/^\d{4}-\d{2}-\d{2}$/.test(nextReview) ? nextReview : today) : null,
+                    learned: isLearned
+                });
+                addedCount++;
+            });
+
+            saveData();
+            updateAllDisplays();
+            let msg = `${addedCount}問をインポートしました`;
+            if (skippedCount > 0) msg += `（${skippedCount}件スキップ）`;
+            showToast(msg, 'success');
+            document.getElementById('import-csv-input').value = '';
+        } catch (error) {
+            showToast('CSVの読み込みに失敗しました', 'error');
+            console.error('CSV import error:', error);
+        }
+    };
+    reader.readAsText(file, 'UTF-8');
+}
