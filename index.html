@@ -88,47 +88,13 @@
                 </div>
             </div>
 
+            <div id="today-review-content" class="card-display-area"></div>
+
             <div class="review-controls">
-                <div style="position: relative; flex: 1;">
-                    <button id="btn-settings-toggle" class="btn btn-secondary" style="width: 100%; padding: 8px 4px; font-size: 0.8rem;">⚙️ 設定</button>
-                    <div id="btn-settings-panel" class="settings-panel">
-                        <div class="settings-group">
-                            <label>評価モード</label>
-                            <div class="btn-row">
-                                <button id="eval-mode-simple-btn" class="btn btn-small btn-primary" onclick="setEvalMode('simple')">正誤</button>
-                                <button id="eval-mode-detail-btn" class="btn btn-small btn-secondary" onclick="setEvalMode('detail')">A~E</button>
-                            </div>
-                        </div>
-                        <div class="settings-group">
-                            <label>ボタンサイズ</label>
-                            <div class="btn-row">
-                                <button id="btn-size-small-btn" class="btn btn-small btn-primary" onclick="setBtnSize('small')">小</button>
-                                <button id="btn-size-large-btn" class="btn btn-small btn-secondary" onclick="setBtnSize('large')">大</button>
-                            </div>
-                        </div>
-                        <div class="settings-group">
-                            <label>不正解モード</label>
-                            <div class="btn-row">
-                                <button id="incorrect-mode-strict" class="btn btn-small btn-secondary" onclick="setIncorrectMode('strict')">ストイック</button>
-                                <button id="incorrect-mode-normal" class="btn btn-small btn-primary" onclick="setIncorrectMode('normal')">ノーマル</button>
-                                <button id="incorrect-mode-gentle" class="btn btn-small btn-secondary" onclick="setIncorrectMode('gentle')">やさしい</button>
-                            </div>
-                        </div>
-                        <div class="settings-group">
-                            <label>1日の目標</label>
-                            <div class="btn-row" style="align-items: center;">
-                                <input type="number" id="daily-goal-input" min="0" max="500" step="5" value="0" class="form-input" style="width: 70px; text-align: center;">
-                                <span style="font-size: 0.8rem; color: var(--text-light);">問（0=目標なし）</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
                 <button id="toggle-random-btn" class="btn btn-secondary">🔀 ランダム</button>
                 <button id="toggle-answer-btn" class="btn btn-primary">👁️ 回答表示</button>
                 <button id="undo-eval-btn" class="btn btn-secondary" disabled>↩️ 戻る</button>
             </div>
-
-            <div id="today-review-content" class="card-display-area"></div>
         </div>
 
         <!-- タブ2：負荷予測カレンダー -->
@@ -235,96 +201,139 @@
         <!-- タブ6：設定 -->
         <div class="tab-content" id="management">
             <h2>設定</h2>
-            <div class="mode-selector">
-                <button class="mode-btn active" data-mode="individual">個別登録</button>
-                <button class="mode-btn" data-mode="bulk">一括登録</button>
-                <button class="mode-btn" data-mode="structure">教材構造</button>
-                <button class="mode-btn" data-mode="backup">バックアップ</button>
+            <div class="mode-selector-grid">
+                <button class="mode-btn-row active" data-mode="review-settings">🎮 復習設定</button>
+                <button class="mode-btn-row" data-mode="register">📝 教材登録</button>
+                <button class="mode-btn-row" data-mode="structure">📚 教材構造</button>
+                <button class="mode-btn-row" data-mode="backup">💾 バックアップ</button>
             </div>
 
-            <!-- 個別登録 -->
-            <div id="individual-mode" class="management-mode">
+            <!-- 復習設定 -->
+            <div id="review-settings-mode" class="management-mode">
                 <div class="form-section">
-                    <div class="form-row">
-                        <label>科目名:</label>
-                        <select id="subject-select" class="form-select"><option value="">-- 科目を選択 --</option></select>
-                        <input type="text" id="subject-name" class="form-input" style="display:none;" placeholder="新しい科目名を入力">
+                    <div class="settings-group">
+                        <label>評価モード</label>
+                        <div class="btn-row">
+                            <button id="eval-mode-simple-btn" class="btn btn-small btn-primary" onclick="setEvalMode('simple')">正誤</button>
+                            <button id="eval-mode-detail-btn" class="btn btn-small btn-secondary" onclick="setEvalMode('detail')">A~E</button>
+                        </div>
                     </div>
-                    <div class="form-row">
-                        <label>問題集名:</label>
-                        <select id="book-select" class="form-select" disabled><option value="">-- 問題集を選択 --</option></select>
-                        <input type="text" id="book-name" class="form-input" style="display:none;" placeholder="新しい問題集名を入力">
+                    <div class="settings-group">
+                        <label>ボタンサイズ</label>
+                        <div class="btn-row">
+                            <button id="btn-size-small-btn" class="btn btn-small btn-primary" onclick="setBtnSize('small')">小</button>
+                            <button id="btn-size-large-btn" class="btn btn-small btn-secondary" onclick="setBtnSize('large')">大</button>
+                        </div>
                     </div>
-                    <div class="form-row">
-                        <label>単元名:</label>
-                        <select id="chapter-select" class="form-select" disabled><option value="">-- 単元を選択 --</option></select>
-                        <input type="text" id="chapter-name" class="form-input" style="display:none;" placeholder="新しい単元名を入力">
+                    <div class="settings-group">
+                        <label>不正解モード</label>
+                        <div class="btn-row">
+                            <button id="incorrect-mode-strict" class="btn btn-small btn-secondary" onclick="setIncorrectMode('strict')">ストイック</button>
+                            <button id="incorrect-mode-normal" class="btn btn-small btn-primary" onclick="setIncorrectMode('normal')">ノーマル</button>
+                            <button id="incorrect-mode-gentle" class="btn btn-small btn-secondary" onclick="setIncorrectMode('gentle')">やさしい</button>
+                        </div>
                     </div>
-                    <div class="form-row">
-                        <label>問題文:</label>
-                        <textarea id="question-text" class="form-textarea" rows="4" placeholder="問題文を入力（改行OK）"></textarea>
-                    </div>
-                    <div class="form-row">
-                        <label>解答:</label>
-                        <textarea id="answer-text" class="form-textarea" rows="5" placeholder="解答を入力（改行OK）"></textarea>
-                    </div>
-                    <div class="form-row" style="margin-bottom: 15px;">
-                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-                            <input type="checkbox" id="register-as-learned">
-                            <span>既習として登録（すぐに復習対象にする）</span>
-                        </label>
-                    </div>
-                    <div class="form-actions">
-                        <button id="add-and-continue" class="btn btn-primary">➕ 追加して続ける</button>
-                        <button id="add-and-finish" class="btn btn-success">✅ 追加して完了</button>
+                    <div class="settings-group">
+                        <label>1日の目標</label>
+                        <div class="btn-row" style="align-items: center;">
+                            <input type="number" id="daily-goal-input" min="0" max="500" step="5" value="0" class="form-input" style="width: 70px; text-align: center;">
+                            <span style="font-size: 0.8rem; color: var(--text-light);">問（0=目標なし）</span>
+                        </div>
                     </div>
                 </div>
             </div>
 
-            <!-- 一括登録 -->
-            <div id="bulk-mode" class="management-mode" style="display:none;">
-                <div class="form-section">
-                    <div class="form-row">
-                        <label>科目名:</label>
-                        <select id="bulk-subject-select" class="form-select"><option value="">-- 科目を選択 --</option></select>
-                        <input type="text" id="bulk-subject-name" class="form-input" style="display:none;" placeholder="新しい科目名を入力">
+            <!-- 教材登録 -->
+            <div id="register-mode" class="management-mode" style="display:none;">
+                <div class="register-sub-tabs">
+                    <button class="register-sub-tab active" data-register-mode="individual">個別登録</button>
+                    <button class="register-sub-tab" data-register-mode="bulk">一括登録</button>
+                </div>
+
+                <!-- 個別登録 -->
+                <div id="individual-mode" class="register-sub-content">
+                    <div class="form-section">
+                        <div class="form-row">
+                            <label>科目名:</label>
+                            <select id="subject-select" class="form-select"><option value="">-- 科目を選択 --</option></select>
+                            <input type="text" id="subject-name" class="form-input" style="display:none;" placeholder="新しい科目名を入力">
+                        </div>
+                        <div class="form-row">
+                            <label>問題集名:</label>
+                            <select id="book-select" class="form-select" disabled><option value="">-- 問題集を選択 --</option></select>
+                            <input type="text" id="book-name" class="form-input" style="display:none;" placeholder="新しい問題集名を入力">
+                        </div>
+                        <div class="form-row">
+                            <label>単元名:</label>
+                            <select id="chapter-select" class="form-select" disabled><option value="">-- 単元を選択 --</option></select>
+                            <input type="text" id="chapter-name" class="form-input" style="display:none;" placeholder="新しい単元名を入力">
+                        </div>
+                        <div class="form-row">
+                            <label>問題文:</label>
+                            <textarea id="question-text" class="form-textarea" rows="4" placeholder="問題文を入力（改行OK）"></textarea>
+                        </div>
+                        <div class="form-row">
+                            <label>解答:</label>
+                            <textarea id="answer-text" class="form-textarea" rows="5" placeholder="解答を入力（改行OK）"></textarea>
+                        </div>
+                        <div class="form-row" style="margin-bottom: 15px;">
+                            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                                <input type="checkbox" id="register-as-learned">
+                                <span>既習として登録（すぐに復習対象にする）</span>
+                            </label>
+                        </div>
+                        <div class="form-actions">
+                            <button id="add-and-continue" class="btn btn-primary">➕ 追加して続ける</button>
+                            <button id="add-and-finish" class="btn btn-success">✅ 追加して完了</button>
+                        </div>
                     </div>
-                    <div class="form-row">
-                        <label>問題集名:</label>
-                        <select id="bulk-book-select" class="form-select" disabled><option value="">-- 問題集を選択 --</option></select>
-                        <input type="text" id="bulk-book-name" class="form-input" style="display:none;" placeholder="新しい問題集名を入力">
-                    </div>
-                    <div class="form-row">
-                        <label>単元名:</label>
-                        <select id="bulk-chapter-select" class="form-select" disabled><option value="">-- 単元を選択 --</option></select>
-                        <input type="text" id="bulk-chapter-name" class="form-input" style="display:none;" placeholder="新しい単元名を入力">
-                    </div>
-                    <div class="guide-box">
-                        <h4>📋 一括登録の入力形式</h4>
-                        <p><strong>推奨：問題文と解答の区切りに「===」を使用</strong></p>
-                        <div style="background: #f8f9fa; padding: 12px; border-radius: 5px; margin: 8px 0; font-family: monospace; white-space: pre-wrap; font-size: 0.85rem;">問題文（改行自由）
+                </div>
+
+                <!-- 一括登録 -->
+                <div id="bulk-mode" class="register-sub-content" style="display:none;">
+                    <div class="form-section">
+                        <div class="form-row">
+                            <label>科目名:</label>
+                            <select id="bulk-subject-select" class="form-select"><option value="">-- 科目を選択 --</option></select>
+                            <input type="text" id="bulk-subject-name" class="form-input" style="display:none;" placeholder="新しい科目名を入力">
+                        </div>
+                        <div class="form-row">
+                            <label>問題集名:</label>
+                            <select id="bulk-book-select" class="form-select" disabled><option value="">-- 問題集を選択 --</option></select>
+                            <input type="text" id="bulk-book-name" class="form-input" style="display:none;" placeholder="新しい問題集名を入力">
+                        </div>
+                        <div class="form-row">
+                            <label>単元名:</label>
+                            <select id="bulk-chapter-select" class="form-select" disabled><option value="">-- 単元を選択 --</option></select>
+                            <input type="text" id="bulk-chapter-name" class="form-input" style="display:none;" placeholder="新しい単元名を入力">
+                        </div>
+                        <div class="guide-box">
+                            <h4>📋 一括登録の入力形式</h4>
+                            <p><strong>推奨：問題文と解答の区切りに「===」を使用</strong></p>
+                            <div style="background: #f8f9fa; padding: 12px; border-radius: 5px; margin: 8px 0; font-family: monospace; white-space: pre-wrap; font-size: 0.85rem;">問題文（改行自由）
 ===
 解答（改行自由）
 ---
 次の問題文
 ===
 次の解答</div>
-                        <p style="background: #e3f2fd; padding: 8px; border-radius: 5px; margin: 8px 0; font-size: 0.85rem;">
-                            ✅ 問題文と解答：<strong style="color: #e74c3c;">===</strong>　✅ 問題と問題：<strong style="color: #3498db;">---</strong>
-                        </p>
-                    </div>
-                    <div class="form-row">
-                        <label>テキスト入力:</label>
-                        <textarea id="bulk-input" class="form-textarea" rows="12" placeholder="問題文&#10;===&#10;解答&#10;---&#10;次の問題文&#10;===&#10;次の解答"></textarea>
-                    </div>
-                    <div class="form-row" style="margin-bottom: 15px;">
-                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-                            <input type="checkbox" id="bulk-register-as-learned">
-                            <span>既習として登録</span>
-                        </label>
-                    </div>
-                    <div class="form-actions">
-                        <button id="bulk-register" class="btn btn-primary">📝 一括登録する</button>
+                            <p style="background: #e3f2fd; padding: 8px; border-radius: 5px; margin: 8px 0; font-size: 0.85rem;">
+                                ✅ 問題文と解答：<strong style="color: #e74c3c;">===</strong>　✅ 問題と問題：<strong style="color: #3498db;">---</strong>
+                            </p>
+                        </div>
+                        <div class="form-row">
+                            <label>テキスト入力:</label>
+                            <textarea id="bulk-input" class="form-textarea" rows="12" placeholder="問題文&#10;===&#10;解答&#10;---&#10;次の問題文&#10;===&#10;次の解答"></textarea>
+                        </div>
+                        <div class="form-row" style="margin-bottom: 15px;">
+                            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                                <input type="checkbox" id="bulk-register-as-learned">
+                                <span>既習として登録</span>
+                            </label>
+                        </div>
+                        <div class="form-actions">
+                            <button id="bulk-register" class="btn btn-primary">📝 一括登録する</button>
+                        </div>
                     </div>
                 </div>
             </div>

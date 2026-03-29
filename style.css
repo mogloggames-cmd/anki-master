@@ -157,7 +157,7 @@ button {
 .app-header {
     background: linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
     color: white;
-    padding: 24px 30px;
+    padding: 12px 20px;
     text-align: center;
     position: relative;
 }
@@ -184,16 +184,17 @@ button {
 }
 
 .app-header h1 {
-    font-size: 1.8rem;
-    margin-bottom: 4px;
+    font-size: 1.3rem;
+    margin-bottom: 0;
     font-weight: 800;
     letter-spacing: -0.02em;
 }
 
 .subtitle {
-    font-size: 0.85rem;
+    font-size: 0.75rem;
     opacity: 0.8;
     font-weight: 400;
+    margin: 0;
 }
 
 /* ========================================
@@ -602,6 +603,8 @@ button {
     font-size: 0.95rem;
     font-weight: 700;
     color: var(--primary);
+    white-space: nowrap;
+    flex-shrink: 0;
 }
 
 .question-section {
@@ -1216,6 +1219,63 @@ button {
     border-color: var(--primary);
 }
 
+/* 設定タブ: 一行ずつのメニュー */
+.mode-selector-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 20px;
+}
+
+.mode-btn-row {
+    width: 100%;
+    padding: 14px 16px;
+    background: var(--card-bg);
+    border: 2px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    text-align: left;
+    color: var(--text-dark);
+}
+
+.mode-btn-row:hover { border-color: var(--primary); background: var(--question-bg); }
+
+.mode-btn-row.active {
+    background: var(--primary);
+    color: white;
+    border-color: var(--primary);
+}
+
+/* 教材登録サブタブ */
+.register-sub-tabs {
+    display: flex;
+    gap: 0;
+    margin-bottom: 16px;
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    border: 2px solid var(--primary);
+}
+
+.register-sub-tab {
+    flex: 1;
+    padding: 10px 12px;
+    background: var(--card-bg);
+    border: none;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    color: var(--primary);
+}
+
+.register-sub-tab.active {
+    background: var(--primary);
+    color: white;
+}
+
 .form-section {
     background: var(--bg-surface);
     padding: 20px;
@@ -1468,10 +1528,10 @@ button {
     }
 
     .app-header {
-        padding: 16px 20px;
-        padding-top: calc(16px + env(safe-area-inset-top, 0px));
+        padding: 8px 16px;
+        padding-top: calc(8px + env(safe-area-inset-top, 0px));
     }
-    .app-header h1 { font-size: 1.4rem; }
+    .app-header h1 { font-size: 1.1rem; }
 
     .tab-nav {
         position: fixed;
@@ -1537,6 +1597,8 @@ button {
     .structure-actions { flex-wrap: wrap; }
     .mode-selector { gap: 6px; }
     .mode-btn { padding: 10px 6px; font-size: 0.8rem; min-width: 0; }
+    .mode-selector-grid { gap: 4px; }
+    .mode-btn-row { padding: 12px 14px; font-size: 0.85rem; }
 
     .dashboard-summary { gap: 8px; }
     .stat-number { font-size: 1.5rem; }
@@ -1575,10 +1637,13 @@ button {
 .badge-unlearned {
     background: #95a5a6;
     color: white;
-    padding: 2px 8px;
+    padding: 2px 6px;
     border-radius: 4px;
-    font-size: 0.75rem;
-    margin-left: 6px;
+    font-size: 0.65rem;
+    margin-left: 4px;
+    white-space: nowrap;
+    display: inline-block;
+    vertical-align: middle;
 }
 
 /* ========================================

@@ -71,6 +71,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     registerServiceWorker();
     checkPlatformSupport();
     initCloudSync();
+    autoCloudSyncPullOnLoad();
 });
 
 // ========================================
@@ -325,6 +326,84 @@ function updateCloudSyncStatusText(text, color, detail) {
 }
 
 // ========================================
+// 自動クラウド同期
+// ========================================
+
+let autoSyncTimer = null;
+let autoSyncInProgress = false;
+
+function scheduleAutoSync() {
+    const config = getCloudSyncConfig();
+    if (!config) return;
+    if (autoSyncTimer) clearTimeout(autoSyncTimer);
+    autoSyncTimer = setTimeout(() => autoCloudSyncPush(), 3000);
+}
+
+async function autoCloudSyncPush() {
+    const config = getCloudSyncConfig();
+    if (!config || autoSyncInProgress) return;
+    autoSyncInProgress = true;
+    try {
+        const response = await fetch(config.url + '?action=push', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Sync-Key': config.password },
+            body: JSON.stringify({ data: theoryData, deviceName: config.deviceName })
+        });
+        if (response.ok) {
+            localStorage.setItem('lastCloudSync', new Date().toISOString());
+            updateCloudSyncStatus();
+        }
+    } catch (e) { /* silent fail for auto-sync */ }
+    autoSyncInProgress = false;
+}
+
+async function autoCloudSyncPullOnLoad() {
+    const config = getCloudSyncConfig();
+    if (!config) return;
+    try {
+        const response = await fetch(config.url + '?action=info', {
+            method: 'GET',
+            headers: { 'X-Sync-Key': config.password }
+        });
+        if (!response.ok) return;
+        const info = await response.json();
+        if (!info.lastModified) return;
+
+        const serverTime = new Date(info.lastModified).getTime();
+        const lastSync = localStorage.getItem('lastCloudSync');
+        const localTime = lastSync ? new Date(lastSync).getTime() : 0;
+
+        if (serverTime > localTime + 5000) {
+            const pullResp = await fetch(config.url + '?action=pull', {
+                method: 'GET',
+                headers: { 'X-Sync-Key': config.password }
+            });
+            if (!pullResp.ok) return;
+            const result = await pullResp.json();
+            if (!result.data) return;
+
+            const serverCount = countAllTheories(result.data);
+            const localCount = getAllTheories().length;
+
+            if (serverCount >= localCount) {
+                theoryData = result.data;
+                saveDataLocal();
+                updateAllDisplays();
+                localStorage.setItem('lastCloudSync', new Date().toISOString());
+                updateCloudSyncStatus();
+                showToast(`サーバーから自動同期しました（${serverCount}問）`, 'success');
+            }
+        }
+    } catch (e) { /* silent fail */ }
+}
+
+function saveDataLocal() {
+    localStorage.setItem('theoryData', JSON.stringify(theoryData));
+    updateSubjectSelectors();
+    writeSyncFile();
+}
+
+// ========================================
 // JSONバックアップ（iOS対応）
 // ========================================
 
@@ -461,6 +540,7 @@ function saveData() {
     localStorage.setItem('theoryData', JSON.stringify(theoryData));
     updateSubjectSelectors();
     writeSyncFile();
+    scheduleAutoSync();
 }
 
 function generateId() {
@@ -719,8 +799,13 @@ function initializeEventListeners() {
     });
 
     // 教材管理モード
-    document.querySelectorAll('.mode-btn').forEach(btn => {
+    document.querySelectorAll('.mode-btn-row').forEach(btn => {
         btn.addEventListener('click', () => switchManagementMode(btn.dataset.mode));
+    });
+
+    // 教材登録サブタブ
+    document.querySelectorAll('.register-sub-tab').forEach(btn => {
+        btn.addEventListener('click', () => switchRegisterSubTab(btn.dataset.registerMode));
     });
 
     document.getElementById('add-and-continue').addEventListener('click', () => addTheory(true));
@@ -757,15 +842,7 @@ function initializeEventListeners() {
     document.getElementById('toggle-random-btn').addEventListener('click', () => toggleRandomOrder());
     document.getElementById('toggle-answer-btn').addEventListener('click', () => toggleAnswerVisibility());
 
-    // 設定パネル
-    document.getElementById('btn-settings-toggle').addEventListener('click', () => toggleBtnSettingsPanel());
-    document.addEventListener('click', (e) => {
-        const panel = document.getElementById('btn-settings-panel');
-        const toggle = document.getElementById('btn-settings-toggle');
-        if (panel && panel.style.display !== 'none' && !panel.contains(e.target) && e.target !== toggle) {
-            panel.style.display = 'none';
-        }
-    });
+    // 設定パネル（設定タブ内に統合済み）
 
     // エクスポートフィルター
     document.querySelectorAll('.export-eval-filter').forEach(cb => {
@@ -1229,6 +1306,7 @@ function displayCurrentCard(containerId = 'today-review-content') {
 
     cardAnimDirection = 'right'; // reset
     attachEvaluationButtons(containerId);
+    attachCardTapToggle(containerId);
 }
 
 function showCompletionCelebration(container) {
@@ -1335,6 +1413,20 @@ function attachEvaluationButtons(containerId) {
             }
         });
     });
+}
+
+function attachCardTapToggle(containerId) {
+    const container = document.getElementById(containerId);
+    const questionSection = container.querySelector('.question-section');
+    const answerSection = container.querySelector('.answer-section');
+    if (questionSection) {
+        questionSection.style.cursor = 'pointer';
+        questionSection.addEventListener('click', () => toggleAnswerVisibility());
+    }
+    if (answerSection) {
+        answerSection.style.cursor = 'pointer';
+        answerSection.addEventListener('click', () => toggleAnswerVisibility());
+    }
 }
 
 function upgradeEvaluation(current) {
@@ -1698,17 +1790,24 @@ function showCalendarDetail(dateStr) {
 // ========================================
 
 function switchManagementMode(mode) {
-    document.querySelectorAll('.mode-btn').forEach(btn => btn.classList.remove('active'));
+    document.querySelectorAll('.mode-btn-row').forEach(btn => btn.classList.remove('active'));
     document.querySelector(`[data-mode="${mode}"]`).classList.add('active');
-    document.getElementById('individual-mode').style.display = 'none';
-    document.getElementById('bulk-mode').style.display = 'none';
+    document.getElementById('review-settings-mode').style.display = 'none';
+    document.getElementById('register-mode').style.display = 'none';
     document.getElementById('structure-mode').style.display = 'none';
     document.getElementById('backup-mode').style.display = 'none';
 
-    if (mode === 'individual') document.getElementById('individual-mode').style.display = 'block';
-    else if (mode === 'bulk') document.getElementById('bulk-mode').style.display = 'block';
+    if (mode === 'review-settings') { document.getElementById('review-settings-mode').style.display = 'block'; initButtonSettings(); }
+    else if (mode === 'register') { document.getElementById('register-mode').style.display = 'block'; }
     else if (mode === 'structure') { document.getElementById('structure-mode').style.display = 'block'; updateStructureList(); }
     else if (mode === 'backup') { document.getElementById('backup-mode').style.display = 'block'; updateExportFilterCount(); }
+}
+
+function switchRegisterSubTab(subMode) {
+    document.querySelectorAll('.register-sub-tab').forEach(btn => btn.classList.remove('active'));
+    document.querySelector(`[data-register-mode="${subMode}"]`).classList.add('active');
+    document.getElementById('individual-mode').style.display = subMode === 'individual' ? 'block' : 'none';
+    document.getElementById('bulk-mode').style.display = subMode === 'bulk' ? 'block' : 'none';
 }
 
 function addTheory(continueAdding) {
@@ -2323,11 +2422,6 @@ function toggleAnswerVisibility() {
     }
 }
 
-function toggleBtnSettingsPanel() {
-    const panel = document.getElementById('btn-settings-panel');
-    panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
-    if (panel.style.display !== 'none') initButtonSettings();
-}
 
 function setEvalMode(mode) {
     evalMode = mode;
