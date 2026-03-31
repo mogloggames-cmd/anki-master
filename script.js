@@ -746,7 +746,7 @@ function initializeEventListeners() {
         button.addEventListener('click', () => switchTab(button.dataset.tab));
     });
 
-    // 全理論一覧フィルター
+    // 全理論一覧フィルター（タブが存在する場合のみ）
     document.querySelectorAll('.filter-btn[data-filter]').forEach(btn => {
         btn.addEventListener('click', () => {
             document.querySelectorAll('.filter-btn[data-filter]').forEach(b => b.classList.remove('active'));
@@ -755,15 +755,19 @@ function initializeEventListeners() {
         });
     });
 
-    document.getElementById('filter-subject').addEventListener('change', () => updateAllTheoriesList());
-    document.getElementById('theory-search').addEventListener('input', () => updateAllTheoriesList());
+    const filterSubject = document.getElementById('filter-subject');
+    if (filterSubject) filterSubject.addEventListener('change', () => updateAllTheoriesList());
+    const theorySearch = document.getElementById('theory-search');
+    if (theorySearch) theorySearch.addEventListener('input', () => updateAllTheoriesList());
 
-    // カレンダー
-    document.getElementById('prev-month').addEventListener('click', () => {
+    // カレンダー（タブが存在する場合のみ）
+    const prevMonth = document.getElementById('prev-month');
+    if (prevMonth) prevMonth.addEventListener('click', () => {
         calendarCurrentDate.setMonth(calendarCurrentDate.getMonth() - 1);
         updateCalendar();
     });
-    document.getElementById('next-month').addEventListener('click', () => {
+    const nextMonth = document.getElementById('next-month');
+    if (nextMonth) nextMonth.addEventListener('click', () => {
         calendarCurrentDate.setMonth(calendarCurrentDate.getMonth() + 1);
         updateCalendar();
     });
@@ -1540,6 +1544,7 @@ function findTheoryById(id) {
 
 function updateFilterSubjectSelect() {
     const select = document.getElementById('filter-subject');
+    if (!select) return;
     select.innerHTML = '<option value="">すべて</option>';
     theoryData.subjects.forEach(subject => {
         const option = document.createElement('option');
@@ -1550,8 +1555,11 @@ function updateFilterSubjectSelect() {
 }
 
 function updateAllTheoriesList() {
-    const evalFilter = document.querySelector('.filter-btn[data-filter].active').dataset.filter;
-    const subjectFilter = document.getElementById('filter-subject').value;
+    const activeFilter = document.querySelector('.filter-btn[data-filter].active');
+    if (!activeFilter) return;
+    const evalFilter = activeFilter.dataset.filter;
+    const subjectEl = document.getElementById('filter-subject');
+    const subjectFilter = subjectEl ? subjectEl.value : '';
     const searchQuery = (document.getElementById('theory-search')?.value || '').trim().toLowerCase();
     let theories = getAllTheories();
 
@@ -1566,6 +1574,7 @@ function updateAllTheoriesList() {
     }
 
     const container = document.getElementById('all-theories-list');
+    if (!container) return;
     const countEl = document.getElementById('theory-count');
     if (countEl) {
         const allCount = getAllTheories().length;
@@ -1668,9 +1677,11 @@ function closeModal() {
 // ========================================
 
 function updateCalendar() {
+    const calMonth = document.getElementById('calendar-month');
+    if (!calMonth) return;
     const year = calendarCurrentDate.getFullYear();
     const month = calendarCurrentDate.getMonth();
-    document.getElementById('calendar-month').textContent = `${year}年${month + 1}月`;
+    calMonth.textContent = `${year}年${month + 1}月`;
 
     const firstDay = new Date(year, month, 1);
     const lastDay = new Date(year, month + 1, 0);

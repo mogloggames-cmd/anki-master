@@ -73,17 +73,9 @@
                 <span class="tab-icon">📝</span>
                 <span class="tab-label">テスト</span>
             </button>
-            <button class="tab-button" data-tab="calendar">
-                <span class="tab-icon">📊</span>
-                <span class="tab-label">負荷予測</span>
-            </button>
             <button class="tab-button" data-tab="incorrect-review">
                 <span class="tab-icon">❌</span>
                 <span class="tab-label">不正解</span>
-            </button>
-            <button class="tab-button" data-tab="all-theories">
-                <span class="tab-icon">📋</span>
-                <span class="tab-label">一覧</span>
             </button>
             <button class="tab-button" data-tab="statistics">
                 <span class="tab-icon">📈</span>
@@ -219,20 +211,6 @@
         </div>
 
         <!-- タブ2：負荷予測カレンダー -->
-        <div class="tab-content" id="calendar">
-            <div class="tab-heading">
-                <h2>負荷予測カレンダー</h2>
-                <button class="help-btn" onclick="showTabHelp('calendar')">?</button>
-            </div>
-            <div class="calendar-controls">
-                <button id="prev-month" class="calendar-nav-btn">◀ 前月</button>
-                <h3 id="calendar-month" class="calendar-title">2026年1月</h3>
-                <button id="next-month" class="calendar-nav-btn">次月 ▶</button>
-            </div>
-            <div id="calendar-grid" class="calendar-grid"></div>
-            <div id="calendar-detail" class="calendar-detail" style="display:none;"></div>
-        </div>
-
         <!-- タブ3：今日の不正解 -->
         <div class="tab-content" id="incorrect-review">
             <div class="review-header">
@@ -250,40 +228,7 @@
             <div id="incorrect-review-content" class="card-display-area"></div>
         </div>
 
-        <!-- タブ4：全理論一覧 -->
-        <div class="tab-content" id="all-theories">
-            <div class="tab-heading">
-                <h2>全理論一覧 <span id="theory-count" style="font-size: 0.8rem; color: var(--text-light); font-weight: 400;"></span></h2>
-                <button class="help-btn" onclick="showTabHelp('all-theories')">?</button>
-            </div>
-            <div class="filter-area">
-                <div class="filter-row">
-                    <label>評価絞り込み:</label>
-                    <div class="filter-buttons">
-                        <button class="filter-btn active" data-filter="all">すべて</button>
-                        <button class="filter-btn" data-filter="unlearned">未習</button>
-                        <button class="filter-btn" data-filter="E">E</button>
-                        <button class="filter-btn" data-filter="D">D</button>
-                        <button class="filter-btn" data-filter="C">C</button>
-                        <button class="filter-btn" data-filter="B">B</button>
-                        <button class="filter-btn" data-filter="A">A</button>
-                    </div>
-                </div>
-                <div class="filter-row">
-                    <label>科目:</label>
-                    <select id="filter-subject" class="form-select">
-                        <option value="">すべて</option>
-                    </select>
-                </div>
-                <div class="filter-row">
-                    <label>検索:</label>
-                    <input type="text" id="theory-search" class="form-input" placeholder="問題文・回答で検索...">
-                </div>
-            </div>
-            <div id="all-theories-list" class="theory-list"></div>
-        </div>
-
-        <!-- タブ5：統計 -->
+        <!-- タブ4：統計 -->
         <div class="tab-content" id="statistics">
             <div class="tab-heading">
                 <h2>学習統計</h2>
