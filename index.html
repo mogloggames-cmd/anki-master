@@ -14,7 +14,50 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <div class="app-container">
+    <!-- ログイン/登録画面 -->
+    <div id="auth-screen" class="auth-screen">
+        <div class="auth-container">
+            <div class="auth-header">
+                <h1>暗記マスター</h1>
+                <p>フラッシュカード学習アプリ</p>
+            </div>
+            <div id="auth-form-login" class="auth-form">
+                <h2>ログイン</h2>
+                <div class="auth-field">
+                    <label>メールアドレス</label>
+                    <input type="email" id="login-email" class="auth-input" placeholder="example@mail.com" autocomplete="email">
+                </div>
+                <div class="auth-field">
+                    <label>パスワード</label>
+                    <input type="password" id="login-password" class="auth-input" placeholder="6文字以上" autocomplete="current-password">
+                </div>
+                <div id="login-error" class="auth-error" style="display:none;"></div>
+                <button id="login-btn" class="auth-btn auth-btn-primary" onclick="handleLogin()">ログイン</button>
+                <p class="auth-switch">アカウントをお持ちでない方は <a href="#" onclick="showAuthForm('register'); return false;">新規登録</a></p>
+                <button class="auth-btn auth-btn-offline" onclick="startOfflineMode()">オフラインで使う</button>
+            </div>
+            <div id="auth-form-register" class="auth-form" style="display:none;">
+                <h2>新規登録</h2>
+                <div class="auth-field">
+                    <label>メールアドレス</label>
+                    <input type="email" id="register-email" class="auth-input" placeholder="example@mail.com" autocomplete="email">
+                </div>
+                <div class="auth-field">
+                    <label>パスワード</label>
+                    <input type="password" id="register-password" class="auth-input" placeholder="6文字以上" autocomplete="new-password">
+                </div>
+                <div class="auth-field">
+                    <label>パスワード（確認）</label>
+                    <input type="password" id="register-password-confirm" class="auth-input" placeholder="もう一度入力" autocomplete="new-password">
+                </div>
+                <div id="register-error" class="auth-error" style="display:none;"></div>
+                <button id="register-btn" class="auth-btn auth-btn-primary" onclick="handleRegister()">アカウント作成</button>
+                <p class="auth-switch">既にアカウントをお持ちの方は <a href="#" onclick="showAuthForm('login'); return false;">ログイン</a></p>
+            </div>
+        </div>
+    </div>
+
+    <div class="app-container" id="app-container" style="display:none;">
         <header class="app-header">
             <h1>暗記マスター</h1>
             <p class="subtitle">フラッシュカード学習アプリ</p>
@@ -25,6 +68,10 @@
             <button class="tab-button active" data-tab="today-review">
                 <span class="tab-icon">📅</span>
                 <span class="tab-label">今日の復習</span>
+            </button>
+            <button class="tab-button" data-tab="test-mode">
+                <span class="tab-icon">📝</span>
+                <span class="tab-label">テスト</span>
             </button>
             <button class="tab-button" data-tab="calendar">
                 <span class="tab-icon">📊</span>
@@ -50,6 +97,9 @@
 
         <!-- タブ1：今日の復習 -->
         <div class="tab-content active" id="today-review">
+            <div style="display: flex; justify-content: flex-end; margin-bottom: 4px;">
+                <button class="help-btn" onclick="showTabHelp('today-review')">?</button>
+            </div>
             <div class="dashboard">
                 <div class="dashboard-summary">
                     <div class="dashboard-stat-card">
@@ -92,14 +142,88 @@
 
             <div class="review-controls">
                 <button id="toggle-random-btn" class="btn btn-secondary">🔀 ランダム</button>
-                <button id="toggle-answer-btn" class="btn btn-primary">👁️ 回答表示</button>
                 <button id="undo-eval-btn" class="btn btn-secondary" disabled>↩️ 戻る</button>
             </div>
         </div>
 
+        <!-- タブ：テストモード -->
+        <div class="tab-content" id="test-mode">
+            <div class="tab-heading">
+                <h2>テストモード</h2>
+                <button class="help-btn" onclick="showTabHelp('test-mode')">?</button>
+            </div>
+
+            <!-- Test Setup -->
+            <div id="test-setup-area">
+                <div class="test-setup">
+                    <div class="form-row">
+                        <label>科目:</label>
+                        <select id="test-subject-select" class="form-select" onchange="onTestSubjectChange()">
+                            <option value="">すべて</option>
+                        </select>
+                    </div>
+                    <div class="form-row">
+                        <label>問題集:</label>
+                        <select id="test-book-select" class="form-select" disabled onchange="onTestBookChange()">
+                            <option value="">すべて</option>
+                        </select>
+                    </div>
+                    <div class="form-row">
+                        <label>単元:</label>
+                        <select id="test-chapter-select" class="form-select" disabled onchange="updateTestAvailableCount()">
+                            <option value="">すべて</option>
+                        </select>
+                    </div>
+                    <div class="form-row">
+                        <label>出題数:</label>
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <select id="test-count-mode" class="form-select" style="width: auto;" onchange="document.getElementById('test-count-input').disabled = this.value === 'all';">
+                                <option value="all">全問</option>
+                                <option value="custom">指定</option>
+                            </select>
+                            <input type="number" id="test-count-input" class="form-input" style="width: 80px; text-align: center;" min="1" max="999" value="20" disabled>
+                            <span style="font-size: 0.85rem; color: var(--text-light);">問</span>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                            <input type="checkbox" id="test-random" checked>
+                            <span>ランダム順序</span>
+                        </label>
+                    </div>
+                    <div id="test-available-count" style="margin-bottom: 12px; font-size: 0.85rem; color: var(--text-light);"></div>
+                    <button class="btn btn-primary" style="width: 100%; padding: 14px; font-size: 1rem;" onclick="startTest()">📝 テスト開始</button>
+                </div>
+            </div>
+
+            <!-- Test Execution -->
+            <div id="test-execution-area" style="display: none;">
+                <div class="test-card-nav">
+                    <span id="test-progress-text">No.1 / 20</span>
+                </div>
+                <div class="test-progress-bar">
+                    <div class="test-progress-fill" id="test-progress-fill" style="width: 0%;"></div>
+                </div>
+                <div id="test-card-display" class="card-display-area"></div>
+                <div class="test-answer-buttons">
+                    <button class="btn" style="background: #4CAF50; color: white;" onclick="recordTestAnswer(true)">⭕ 正解</button>
+                    <button class="btn" style="background: #f44336; color: white;" onclick="recordTestAnswer(false)">❌ 不正解</button>
+                </div>
+                <div style="margin-top: 12px; text-align: center;">
+                    <button class="btn btn-secondary btn-small" onclick="abortTest()">テストを中止</button>
+                </div>
+            </div>
+
+            <!-- Test Results -->
+            <div id="test-result-area" style="display: none;"></div>
+        </div>
+
         <!-- タブ2：負荷予測カレンダー -->
         <div class="tab-content" id="calendar">
-            <h2>負荷予測カレンダー</h2>
+            <div class="tab-heading">
+                <h2>負荷予測カレンダー</h2>
+                <button class="help-btn" onclick="showTabHelp('calendar')">?</button>
+            </div>
             <div class="calendar-controls">
                 <button id="prev-month" class="calendar-nav-btn">◀ 前月</button>
                 <h3 id="calendar-month" class="calendar-title">2026年1月</h3>
@@ -112,7 +236,10 @@
         <!-- タブ3：今日の不正解 -->
         <div class="tab-content" id="incorrect-review">
             <div class="review-header">
-                <h2>今日の不正解</h2>
+                <div class="tab-heading">
+                    <h2>今日の不正解</h2>
+                    <button class="help-btn" onclick="showTabHelp('incorrect-review')">?</button>
+                </div>
                 <div class="review-stats">
                     <span class="stat-badge stat-total">不正解: <span id="incorrect-total">0</span>問</span>
                 </div>
@@ -125,7 +252,10 @@
 
         <!-- タブ4：全理論一覧 -->
         <div class="tab-content" id="all-theories">
-            <h2>全理論一覧 <span id="theory-count" style="font-size: 0.8rem; color: var(--text-light); font-weight: 400;"></span></h2>
+            <div class="tab-heading">
+                <h2>全理論一覧 <span id="theory-count" style="font-size: 0.8rem; color: var(--text-light); font-weight: 400;"></span></h2>
+                <button class="help-btn" onclick="showTabHelp('all-theories')">?</button>
+            </div>
             <div class="filter-area">
                 <div class="filter-row">
                     <label>評価絞り込み:</label>
@@ -155,7 +285,10 @@
 
         <!-- タブ5：統計 -->
         <div class="tab-content" id="statistics">
-            <h2>学習統計</h2>
+            <div class="tab-heading">
+                <h2>学習統計</h2>
+                <button class="help-btn" onclick="showTabHelp('statistics')">?</button>
+            </div>
 
             <!-- 連続学習・累計 -->
             <div class="stats-summary">
@@ -200,8 +333,12 @@
 
         <!-- タブ6：設定 -->
         <div class="tab-content" id="management">
-            <h2>設定</h2>
+            <div class="tab-heading">
+                <h2>設定</h2>
+                <button class="help-btn" onclick="showTabHelp('management')">?</button>
+            </div>
             <div class="mode-selector-grid">
+                <button class="mode-btn-row" onclick="showUsageGuide(); return false;" style="background: var(--question-bg); border-color: var(--accent); color: var(--accent);">📖 使い方ガイド</button>
                 <button class="mode-btn-row active" data-mode="review-settings">🎮 復習設定</button>
                 <button class="mode-btn-row" data-mode="register">📝 教材登録</button>
                 <button class="mode-btn-row" data-mode="structure">📚 教材構造</button>
@@ -354,48 +491,20 @@
                 <div class="form-section">
                     <h3 style="margin-bottom: 20px; color: var(--primary);">💾 データのバックアップ</h3>
 
-                    <!-- クラウド同期 -->
+                    <!-- アカウント情報 -->
                     <div class="backup-section" style="border: 2px solid var(--eval-a); background: var(--question-bg); padding: 16px; border-radius: var(--radius-md); margin-bottom: 16px;">
-                        <h4 style="color: var(--eval-a);">🌐 クラウド同期</h4>
-                        <p style="margin-bottom: 12px; line-height: 1.6; font-size: 0.9rem;">
-                            PC・iPhone間でデータを自動同期します。全デバイスで同じデータを使えます。
-                        </p>
-                        <div id="cloud-sync-status" style="margin-bottom: 12px; padding: 10px; background: var(--card-bg); border-radius: 6px; border: 1px solid var(--border-color);">
-                            <span style="color: #95a5a6;">● 未設定</span>
+                        <h4 style="color: var(--eval-a);">👤 アカウント・同期</h4>
+                        <div id="account-info" style="margin-bottom: 12px; padding: 10px; background: var(--card-bg); border-radius: 6px; border: 1px solid var(--border-color);">
+                            <span style="color: #95a5a6;">未ログイン</span>
                         </div>
-                        <div id="cloud-sync-setup" style="margin-bottom: 12px;">
-                            <div class="form-row" style="margin-bottom: 8px;">
-                                <label style="font-size: 0.85rem;">サーバーURL:</label>
-                                <input type="url" id="cloud-sync-url" class="form-input" placeholder="https://example.com/anki-sync/sync_api.php">
-                            </div>
-                            <div class="form-row" style="margin-bottom: 8px;">
-                                <label style="font-size: 0.85rem;">パスワード:</label>
-                                <input type="password" id="cloud-sync-password" class="form-input" placeholder="同期パスワード">
-                            </div>
-                            <div class="form-row" style="margin-bottom: 8px;">
-                                <label style="font-size: 0.85rem;">デバイス名:</label>
-                                <input type="text" id="cloud-sync-device" class="form-input" placeholder="例: iPhone / ノートPC / デスクトップ">
-                            </div>
+                        <div id="account-sync-status" style="margin-bottom: 12px; padding: 8px; background: var(--card-bg); border-radius: 6px; border: 1px solid var(--border-color); font-size: 0.85rem; display: none;"></div>
+                        <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                            <button class="btn btn-primary" style="flex: 1;" onclick="manualSyncPush()">⬆️ 手動送信</button>
+                            <button class="btn btn-primary" style="flex: 1;" onclick="manualSyncPull()">⬇️ 手動受信</button>
                         </div>
                         <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-                            <button class="btn btn-success" style="flex: 1;" onclick="cloudSyncSave()">💾 設定を保存</button>
-                            <button class="btn btn-primary" style="flex: 1;" onclick="cloudSyncPush()">⬆️ 送信</button>
-                            <button class="btn btn-primary" style="flex: 1;" onclick="cloudSyncPull()">⬇️ 受信</button>
-                        </div>
-                        <div style="margin-top: 8px; display: flex; gap: 8px;">
-                            <button class="btn btn-secondary btn-small" style="flex: 1;" onclick="cloudSyncDisconnect()">🔌 設定解除</button>
-                        </div>
-                    </div>
-
-                    <div id="sync-section" class="backup-section" style="border: 2px solid var(--primary); background: var(--question-bg); padding: 16px; border-radius: var(--radius-md);">
-                        <h4 style="color: var(--primary);">☁️ Google Drive 同期（PCのみ）</h4>
-                        <p style="margin-bottom: 12px; line-height: 1.6; font-size: 0.9rem;">Google Driveの同期フォルダにJSONファイルを保存し、複数のPCでデータを共有できます。</p>
-                        <div id="sync-status" style="margin-bottom: 12px; padding: 10px; background: var(--card-bg); border-radius: 6px; border: 1px solid var(--border-color);">
-                            <span style="color: #95a5a6;">● 未設定</span>
-                        </div>
-                        <div style="display: flex; gap: 10px;">
-                            <button id="sync-setup-btn" class="btn btn-primary" style="flex: 1;">📁 同期ファイルを設定</button>
-                            <button id="sync-disconnect-btn" class="btn btn-secondary" style="display: none;">🔌 解除</button>
+                            <button class="btn btn-secondary btn-small" style="flex: 1;" onclick="showChangePassword()">🔑 パスワード変更</button>
+                            <button class="btn btn-secondary btn-small" style="flex: 1;" onclick="handleLogout()">🚪 ログアウト</button>
                         </div>
                     </div>
 

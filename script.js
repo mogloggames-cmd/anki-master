@@ -26,10 +26,11 @@ let evalMode = localStorage.getItem('evalMode') || 'simple';
 let evalBtnSize = localStorage.getItem('evalBtnSize') || 'small';
 let incorrectMode = localStorage.getItem('incorrectMode') || 'normal';
 
-// Google Drive 同期用
-let syncFileHandle = null;
-let syncWriteTimer = null;
-let lastSyncTime = null;
+// テストモード用
+let testQuestions = [];
+let testCurrentIndex = 0;
+let testResults = []; // { theory, correct: bool }
+let testIsAnswerVisible = false;
 
 // 評価の「元に戻す」用
 let lastEvalAction = null;
@@ -60,18 +61,17 @@ const SWIPE_THRESHOLD = 50;
 
 document.addEventListener('DOMContentLoaded', async () => {
     initTheme();
-    loadData();
-    await initSync();
-    initializeEventListeners();
-    updateAllDisplays();
-    updateSubjectSelectors();
-    initButtonSettings();
-    initIncorrectModeButtons();
-    initDailyGoal();
     registerServiceWorker();
-    checkPlatformSupport();
-    initCloudSync();
-    autoCloudSyncPullOnLoad();
+
+    // login/register Enter key support
+    document.getElementById('login-password').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') handleLogin();
+    });
+    document.getElementById('register-password-confirm').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') handleRegister();
+    });
+
+    await checkAuthAndInit();
 });
 
 // ========================================
@@ -154,125 +154,383 @@ function registerServiceWorker() {
     }
 }
 
-// File System Access API非対応時（iOS Safari）はGoogle Drive同期を非表示
-function checkPlatformSupport() {
-    if (!window.showSaveFilePicker) {
-        const syncSection = document.getElementById('sync-section');
-        if (syncSection) syncSection.style.display = 'none';
-    }
-}
-
 // ========================================
-// クラウド同期
+// アカウント認証 & クラウド同期
 // ========================================
 
-function getCloudSyncConfig() {
-    const saved = localStorage.getItem('cloudSyncConfig');
-    return saved ? JSON.parse(saved) : null;
+const API_BASE_URL = 'https://meta-labo.com/anki-sync/api.php';
+
+let authToken = localStorage.getItem('authToken');
+let authEmail = localStorage.getItem('authEmail');
+let isOfflineMode = false;
+let autoSyncTimer = null;
+let autoSyncInProgress = false;
+
+function getDeviceName() {
+    const ua = navigator.userAgent;
+    if (/iPhone/.test(ua)) return 'iPhone';
+    if (/iPad/.test(ua)) return 'iPad';
+    if (/Android/.test(ua)) return 'Android';
+    return 'PC';
 }
 
-function initCloudSync() {
-    const config = getCloudSyncConfig();
-    if (config) {
-        document.getElementById('cloud-sync-url').value = config.url || '';
-        document.getElementById('cloud-sync-password').value = config.password || '';
-        document.getElementById('cloud-sync-device').value = config.deviceName || '';
-        updateCloudSyncStatus();
+async function checkAuthAndInit() {
+    if (authToken) {
+        // token validation
+        try {
+            const resp = await fetch(API_BASE_URL + '?action=info', {
+                headers: { 'Authorization': 'Bearer ' + authToken }
+            });
+            if (resp.ok) {
+                showApp();
+                initApp();
+                await autoSyncPullOnLoad();
+                return;
+            }
+        } catch (e) {
+            // network error - start in offline mode with existing data
+            showApp();
+            initApp();
+            showToast('オフラインモードで起動しました', 'info');
+            return;
+        }
+        // token expired
+        localStorage.removeItem('authToken');
+        localStorage.removeItem('authEmail');
+        authToken = null;
+        authEmail = null;
     }
+    // show login screen
+    document.getElementById('auth-screen').style.display = 'flex';
 }
 
-function cloudSyncSave() {
-    const url = document.getElementById('cloud-sync-url').value.trim();
-    const password = document.getElementById('cloud-sync-password').value.trim();
-    const deviceName = document.getElementById('cloud-sync-device').value.trim() || 'デバイス';
-
-    if (!url) { showToast('サーバーURLを入力してください', 'warning'); return; }
-    if (!password) { showToast('パスワードを入力してください', 'warning'); return; }
-
-    localStorage.setItem('cloudSyncConfig', JSON.stringify({ url, password, deviceName }));
-    showToast('同期設定を保存しました', 'success');
-    updateCloudSyncStatus();
+function initApp() {
+    loadData();
+    initializeEventListeners();
+    updateAllDisplays();
+    updateSubjectSelectors();
+    initButtonSettings();
+    initIncorrectModeButtons();
+    initDailyGoal();
+    updateAccountInfo();
 }
 
-function cloudSyncDisconnect() {
-    if (!confirm('クラウド同期の設定を解除しますか？')) return;
-    localStorage.removeItem('cloudSyncConfig');
-    localStorage.removeItem('lastCloudSync');
-    document.getElementById('cloud-sync-url').value = '';
-    document.getElementById('cloud-sync-password').value = '';
-    document.getElementById('cloud-sync-device').value = '';
-    updateCloudSyncStatusText('● 未設定', '#95a5a6');
-    showToast('同期設定を解除しました', 'info');
+function showApp() {
+    document.getElementById('auth-screen').style.display = 'none';
+    document.getElementById('app-container').style.display = '';
 }
 
-async function cloudSyncPush() {
-    const config = getCloudSyncConfig();
-    if (!config) { showToast('先に同期設定を保存してください', 'warning'); return; }
+function showAuthForm(type) {
+    document.getElementById('auth-form-login').style.display = type === 'login' ? '' : 'none';
+    document.getElementById('auth-form-register').style.display = type === 'register' ? '' : 'none';
+    document.getElementById('login-error').style.display = 'none';
+    document.getElementById('register-error').style.display = 'none';
+}
 
-    updateCloudSyncStatusText('● 送信中...', '#f39c12');
+function showAuthError(formType, message) {
+    const el = document.getElementById(formType + '-error');
+    el.textContent = message;
+    el.style.display = '';
+}
+
+async function handleLogin() {
+    const email = document.getElementById('login-email').value.trim();
+    const password = document.getElementById('login-password').value;
+    document.getElementById('login-error').style.display = 'none';
+
+    if (!email || !password) {
+        showAuthError('login', 'メールアドレスとパスワードを入力してください');
+        return;
+    }
+
+    const btn = document.getElementById('login-btn');
+    btn.disabled = true;
+    btn.textContent = 'ログイン中...';
+
     try {
-        const response = await fetch(config.url + '?action=push', {
+        const resp = await fetch(API_BASE_URL + '?action=login', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-Sync-Key': config.password },
-            body: JSON.stringify({ data: theoryData, deviceName: config.deviceName })
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, password })
         });
 
-        if (!response.ok) {
-            const err = await response.json().catch(() => ({}));
-            throw new Error(err.error || 'サーバーエラー');
+        const result = await resp.json();
+        if (!resp.ok) {
+            showAuthError('login', result.error || 'ログインに失敗しました');
+            return;
         }
 
-        const result = await response.json();
-        localStorage.setItem('lastCloudSync', new Date().toISOString());
-        updateCloudSyncStatus();
-        showToast(`データを送信しました（${result.theoryCount || 0}問）`, 'success');
+        authToken = result.token;
+        authEmail = result.email;
+        localStorage.setItem('authToken', authToken);
+        localStorage.setItem('authEmail', authEmail);
+        isOfflineMode = false;
+
+        showApp();
+        initApp();
+        await autoSyncPullOnLoad();
+        showToast('ログインしました', 'success');
     } catch (err) {
-        updateCloudSyncStatusText('● 送信エラー', '#e74c3c', err.message);
-        showToast('送信に失敗しました: ' + err.message, 'error');
+        showAuthError('login', 'ネットワークエラー: サーバーに接続できません');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'ログイン';
     }
 }
 
-async function cloudSyncPull() {
-    const config = getCloudSyncConfig();
-    if (!config) { showToast('先に同期設定を保存してください', 'warning'); return; }
+async function handleRegister() {
+    const email = document.getElementById('register-email').value.trim();
+    const password = document.getElementById('register-password').value;
+    const confirm = document.getElementById('register-password-confirm').value;
+    document.getElementById('register-error').style.display = 'none';
 
-    updateCloudSyncStatusText('● 受信中...', '#f39c12');
+    if (!email || !password) {
+        showAuthError('register', 'メールアドレスとパスワードを入力してください');
+        return;
+    }
+    if (password.length < 6) {
+        showAuthError('register', 'パスワードは6文字以上にしてください');
+        return;
+    }
+    if (password !== confirm) {
+        showAuthError('register', 'パスワードが一致しません');
+        return;
+    }
+
+    const btn = document.getElementById('register-btn');
+    btn.disabled = true;
+    btn.textContent = '作成中...';
+
     try {
-        const response = await fetch(config.url + '?action=pull', {
-            method: 'GET',
-            headers: { 'X-Sync-Key': config.password }
+        const resp = await fetch(API_BASE_URL + '?action=register', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, password })
         });
 
-        if (!response.ok) {
-            const err = await response.json().catch(() => ({}));
-            throw new Error(err.error || 'サーバーエラー');
-        }
-
-        const result = await response.json();
-        if (!result.data) {
-            showToast('サーバーにデータがまだありません。先に「送信」してください', 'warning');
-            updateCloudSyncStatus();
+        const result = await resp.json();
+        if (!resp.ok) {
+            showAuthError('register', result.error || '登録に失敗しました');
             return;
         }
 
-        const serverCount = countAllTheories(result.data);
-        const localCount = getAllTheories().length;
+        authToken = result.token;
+        authEmail = result.email;
+        localStorage.setItem('authToken', authToken);
+        localStorage.setItem('authEmail', authEmail);
+        isOfflineMode = false;
 
-        if (!confirm(`サーバーのデータ（${serverCount}問）で上書きします。\n現在のデータ（${localCount}問）は置き換えられます。\n\n最終更新: ${result.deviceName || '不明'}\n${result.lastModified ? new Date(result.lastModified).toLocaleString('ja-JP') : ''}\n\nよろしいですか？`)) {
-            updateCloudSyncStatus();
-            return;
+        showApp();
+        initApp();
+
+        // upload existing local data if any
+        if (getAllTheories().length > 0) {
+            await syncPush();
         }
-
-        theoryData = result.data;
-        saveData();
-        updateAllDisplays();
-        localStorage.setItem('lastCloudSync', new Date().toISOString());
-        updateCloudSyncStatus();
-        showToast(`データを受信しました（${serverCount}問）`, 'success');
+        showToast('アカウントを作成しました', 'success');
     } catch (err) {
-        updateCloudSyncStatusText('● 受信エラー', '#e74c3c', err.message);
-        showToast('受信に失敗しました: ' + err.message, 'error');
+        showAuthError('register', 'ネットワークエラー: サーバーに接続できません');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'アカウント作成';
     }
+}
+
+function startOfflineMode() {
+    isOfflineMode = true;
+    showApp();
+    initApp();
+    showToast('オフラインモードで起動しました', 'info');
+}
+
+async function handleLogout() {
+    if (!confirm('ログアウトしますか？')) return;
+
+    try {
+        await fetch(API_BASE_URL + '?action=logout', {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + authToken }
+        });
+    } catch (e) { /* ignore */ }
+
+    authToken = null;
+    authEmail = null;
+    localStorage.removeItem('authToken');
+    localStorage.removeItem('authEmail');
+    localStorage.removeItem('lastCloudSync');
+    isOfflineMode = false;
+
+    document.getElementById('app-container').style.display = 'none';
+    document.getElementById('auth-screen').style.display = 'flex';
+    showAuthForm('login');
+}
+
+function updateAccountInfo() {
+    const el = document.getElementById('account-info');
+    if (!el) return;
+    const syncEl = document.getElementById('account-sync-status');
+
+    if (isOfflineMode) {
+        el.innerHTML = '<span style="color: #f39c12;">● オフラインモード</span><br><small style="color: var(--text-light);">ログインするとデータが同期されます</small>';
+        if (syncEl) syncEl.style.display = 'none';
+        return;
+    }
+    if (!authToken || !authEmail) {
+        el.innerHTML = '<span style="color: #95a5a6;">● 未ログイン</span>';
+        if (syncEl) syncEl.style.display = 'none';
+        return;
+    }
+
+    let html = '<span style="color: #27ae60;">● ログイン中</span>';
+    html += '<br><small style="color: var(--text-light);">' + authEmail + '</small>';
+    const lastSync = localStorage.getItem('lastCloudSync');
+    if (lastSync) {
+        html += '<br><small style="color: var(--text-light);">最終同期: ' + new Date(lastSync).toLocaleString('ja-JP') + '</small>';
+    }
+    el.innerHTML = html;
+
+    if (syncEl) {
+        syncEl.style.display = '';
+        syncEl.innerHTML = '<span style="color: var(--text-light);">データは自動的に同期されます</span>';
+    }
+}
+
+// ---- sync helpers ----
+
+async function apiRequest(action, method, body) {
+    const opts = {
+        method,
+        headers: { 'Authorization': 'Bearer ' + authToken }
+    };
+    if (body) {
+        opts.headers['Content-Type'] = 'application/json';
+        opts.body = JSON.stringify(body);
+    }
+    const resp = await fetch(API_BASE_URL + '?action=' + action, opts);
+    if (resp.status === 401) {
+        // session expired
+        showToast('セッション切れ。再ログインしてください', 'warning');
+        handleLogout();
+        throw new Error('session_expired');
+    }
+    return resp;
+}
+
+async function syncPush() {
+    if (!authToken || isOfflineMode) return;
+    try {
+        const resp = await apiRequest('push', 'POST', {
+            data: theoryData,
+            deviceName: getDeviceName()
+        });
+        if (resp.ok) {
+            const result = await resp.json();
+            localStorage.setItem('lastCloudSync', new Date().toISOString());
+            updateAccountInfo();
+        }
+    } catch (e) {
+        if (e.message !== 'session_expired') {
+            // silent fail for auto-sync
+        }
+    }
+}
+
+async function syncPull() {
+    if (!authToken || isOfflineMode) return null;
+    try {
+        const resp = await apiRequest('pull', 'GET');
+        if (!resp.ok) return null;
+        const result = await resp.json();
+        return result;
+    } catch (e) {
+        return null;
+    }
+}
+
+function scheduleAutoSync() {
+    if (!authToken || isOfflineMode) return;
+    if (autoSyncTimer) clearTimeout(autoSyncTimer);
+    autoSyncTimer = setTimeout(async () => {
+        if (autoSyncInProgress) return;
+        autoSyncInProgress = true;
+        await syncPush();
+        autoSyncInProgress = false;
+    }, 3000);
+}
+
+async function autoSyncPullOnLoad() {
+    if (!authToken || isOfflineMode) return;
+    try {
+        const resp = await apiRequest('info', 'GET');
+        if (!resp.ok) return;
+        const info = await resp.json();
+        if (!info.lastModified) return;
+
+        const serverTime = new Date(info.lastModified).getTime();
+        const lastSync = localStorage.getItem('lastCloudSync');
+        const localTime = lastSync ? new Date(lastSync).getTime() : 0;
+
+        if (serverTime > localTime + 5000) {
+            const result = await syncPull();
+            if (!result || !result.data) return;
+
+            const serverCount = countAllTheories(result.data);
+            const localCount = getAllTheories().length;
+
+            if (serverCount >= localCount) {
+                theoryData = result.data;
+                saveDataLocal();
+                updateAllDisplays();
+                localStorage.setItem('lastCloudSync', new Date().toISOString());
+                updateAccountInfo();
+                showToast(`サーバーから同期しました（${serverCount}問）`, 'success');
+            }
+        }
+    } catch (e) { /* silent fail */ }
+}
+
+// manual sync buttons
+async function manualSyncPush() {
+    if (!authToken) { showToast('ログインしてください', 'warning'); return; }
+    showToast('送信中...', 'info');
+    await syncPush();
+    showToast(`データを送信しました（${getAllTheories().length}問）`, 'success');
+}
+
+async function manualSyncPull() {
+    if (!authToken) { showToast('ログインしてください', 'warning'); return; }
+    showToast('受信中...', 'info');
+    const result = await syncPull();
+    if (!result || !result.data) {
+        showToast('サーバーにデータがありません', 'warning');
+        return;
+    }
+    const serverCount = countAllTheories(result.data);
+    const localCount = getAllTheories().length;
+    if (!window.confirm(`サーバーのデータ（${serverCount}問）で上書きします。\n現在のデータ（${localCount}問）は置き換えられます。\n\nよろしいですか？`)) return;
+    theoryData = result.data;
+    saveData();
+    updateAllDisplays();
+    localStorage.setItem('lastCloudSync', new Date().toISOString());
+    updateAccountInfo();
+    showToast(`データを受信しました（${serverCount}問）`, 'success');
+}
+
+// password change
+function showChangePassword() {
+    const current = prompt('現在のパスワードを入力:');
+    if (!current) return;
+    const newPass = prompt('新しいパスワードを入力（6文字以上）:');
+    if (!newPass) return;
+    if (newPass.length < 6) { showToast('パスワードは6文字以上にしてください', 'warning'); return; }
+
+    apiRequest('change_password', 'POST', { currentPassword: current, newPassword: newPass })
+        .then(resp => resp.json())
+        .then(result => {
+            if (result.error) { showToast(result.error, 'error'); return; }
+            showToast('パスワードを変更しました', 'success');
+        })
+        .catch(() => showToast('パスワード変更に失敗しました', 'error'));
 }
 
 function countAllTheories(data) {
@@ -285,122 +543,9 @@ function countAllTheories(data) {
     return count;
 }
 
-async function updateCloudSyncStatus() {
-    const config = getCloudSyncConfig();
-    if (!config) {
-        updateCloudSyncStatusText('● 未設定', '#95a5a6');
-        return;
-    }
-
-    const lastSync = localStorage.getItem('lastCloudSync');
-    let statusHTML = '<span style="color: #27ae60;">● 接続済み</span>';
-    statusHTML += '<br><small style="color: var(--text-light);">デバイス: ' + config.deviceName + '</small>';
-    if (lastSync) {
-        statusHTML += '<br><small style="color: var(--text-light);">最終同期: ' + new Date(lastSync).toLocaleString('ja-JP') + '</small>';
-    }
-
-    // サーバー情報を取得
-    try {
-        const response = await fetch(config.url + '?action=info', {
-            method: 'GET',
-            headers: { 'X-Sync-Key': config.password }
-        });
-        if (response.ok) {
-            const info = await response.json();
-            if (info.lastModified) {
-                statusHTML += '<br><small style="color: var(--text-light);">サーバー: ' +
-                    new Date(info.lastModified).toLocaleString('ja-JP') +
-                    ' (' + (info.deviceName || '不明') + ', ' + (info.theoryCount || 0) + '問)</small>';
-            }
-        }
-    } catch (e) { /* ignore network errors for status check */ }
-
-    document.getElementById('cloud-sync-status').innerHTML = statusHTML;
-}
-
-function updateCloudSyncStatusText(text, color, detail) {
-    const el = document.getElementById('cloud-sync-status');
-    if (!el) return;
-    el.innerHTML = '<span style="color: ' + color + ';">' + text + '</span>' +
-        (detail ? '<br><small style="color: var(--text-light);">' + detail + '</small>' : '');
-}
-
-// ========================================
-// 自動クラウド同期
-// ========================================
-
-let autoSyncTimer = null;
-let autoSyncInProgress = false;
-
-function scheduleAutoSync() {
-    const config = getCloudSyncConfig();
-    if (!config) return;
-    if (autoSyncTimer) clearTimeout(autoSyncTimer);
-    autoSyncTimer = setTimeout(() => autoCloudSyncPush(), 3000);
-}
-
-async function autoCloudSyncPush() {
-    const config = getCloudSyncConfig();
-    if (!config || autoSyncInProgress) return;
-    autoSyncInProgress = true;
-    try {
-        const response = await fetch(config.url + '?action=push', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-Sync-Key': config.password },
-            body: JSON.stringify({ data: theoryData, deviceName: config.deviceName })
-        });
-        if (response.ok) {
-            localStorage.setItem('lastCloudSync', new Date().toISOString());
-            updateCloudSyncStatus();
-        }
-    } catch (e) { /* silent fail for auto-sync */ }
-    autoSyncInProgress = false;
-}
-
-async function autoCloudSyncPullOnLoad() {
-    const config = getCloudSyncConfig();
-    if (!config) return;
-    try {
-        const response = await fetch(config.url + '?action=info', {
-            method: 'GET',
-            headers: { 'X-Sync-Key': config.password }
-        });
-        if (!response.ok) return;
-        const info = await response.json();
-        if (!info.lastModified) return;
-
-        const serverTime = new Date(info.lastModified).getTime();
-        const lastSync = localStorage.getItem('lastCloudSync');
-        const localTime = lastSync ? new Date(lastSync).getTime() : 0;
-
-        if (serverTime > localTime + 5000) {
-            const pullResp = await fetch(config.url + '?action=pull', {
-                method: 'GET',
-                headers: { 'X-Sync-Key': config.password }
-            });
-            if (!pullResp.ok) return;
-            const result = await pullResp.json();
-            if (!result.data) return;
-
-            const serverCount = countAllTheories(result.data);
-            const localCount = getAllTheories().length;
-
-            if (serverCount >= localCount) {
-                theoryData = result.data;
-                saveDataLocal();
-                updateAllDisplays();
-                localStorage.setItem('lastCloudSync', new Date().toISOString());
-                updateCloudSyncStatus();
-                showToast(`サーバーから自動同期しました（${serverCount}問）`, 'success');
-            }
-        }
-    } catch (e) { /* silent fail */ }
-}
-
 function saveDataLocal() {
     localStorage.setItem('theoryData', JSON.stringify(theoryData));
     updateSubjectSelectors();
-    writeSyncFile();
 }
 
 // ========================================
@@ -539,7 +684,6 @@ function loadData() {
 function saveData() {
     localStorage.setItem('theoryData', JSON.stringify(theoryData));
     updateSubjectSelectors();
-    writeSyncFile();
     scheduleAutoSync();
 }
 
@@ -547,180 +691,6 @@ function generateId() {
     return Date.now().toString(36) + Math.random().toString(36).substr(2);
 }
 
-// ========================================
-// Google Drive 同期
-// ========================================
-
-function openSyncDB() {
-    return new Promise((resolve, reject) => {
-        const req = indexedDB.open('ankiMasterSync', 1);
-        req.onupgradeneeded = () => req.result.createObjectStore('fileHandles');
-        req.onsuccess = () => resolve(req.result);
-        req.onerror = () => reject(req.error);
-    });
-}
-
-async function saveSyncHandle(handle) {
-    const db = await openSyncDB();
-    return new Promise((resolve, reject) => {
-        const tx = db.transaction('fileHandles', 'readwrite');
-        tx.objectStore('fileHandles').put(handle, 'syncFileHandle');
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => reject(tx.error);
-    });
-}
-
-async function loadSyncHandle() {
-    const db = await openSyncDB();
-    return new Promise((resolve, reject) => {
-        const tx = db.transaction('fileHandles', 'readonly');
-        const req = tx.objectStore('fileHandles').get('syncFileHandle');
-        req.onsuccess = () => resolve(req.result || null);
-        req.onerror = () => reject(req.error);
-    });
-}
-
-async function removeSyncHandle() {
-    const db = await openSyncDB();
-    return new Promise((resolve, reject) => {
-        const tx = db.transaction('fileHandles', 'readwrite');
-        tx.objectStore('fileHandles').delete('syncFileHandle');
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => reject(tx.error);
-    });
-}
-
-async function writeSyncFile() {
-    if (!syncFileHandle) return;
-    if (syncWriteTimer) clearTimeout(syncWriteTimer);
-    syncWriteTimer = setTimeout(async () => {
-        try {
-            const writable = await syncFileHandle.createWritable();
-            await writable.write(JSON.stringify(theoryData, null, 2));
-            await writable.close();
-            lastSyncTime = new Date();
-            updateSyncStatus('synced');
-        } catch (err) {
-            console.error('Sync write error:', err);
-            updateSyncStatus('error', err.message);
-        }
-    }, 500);
-}
-
-async function readSyncFile(handle) {
-    try {
-        const perm = await handle.queryPermission({ mode: 'readwrite' });
-        if (perm !== 'granted') {
-            const req = await handle.requestPermission({ mode: 'readwrite' });
-            if (req !== 'granted') return null;
-        }
-        const file = await handle.getFile();
-        const text = await file.text();
-        if (!text.trim()) return null;
-        const data = JSON.parse(text);
-        if (data && data.subjects) return data;
-        return null;
-    } catch (err) {
-        console.error('Sync read error:', err);
-        return null;
-    }
-}
-
-async function setupSyncFile() {
-    try {
-        const handle = await window.showSaveFilePicker({
-            suggestedName: 'anki_master_sync.json',
-            types: [{ description: 'JSON File', accept: { 'application/json': ['.json'] } }]
-        });
-        syncFileHandle = handle;
-        await saveSyncHandle(handle);
-        await writeSyncFile();
-        updateSyncStatus('synced');
-    } catch (err) {
-        if (err.name !== 'AbortError') {
-            console.error('Sync setup error:', err);
-            showToast('同期ファイルの設定に失敗しました', 'error');
-        }
-    }
-}
-
-async function disconnectSync() {
-    syncFileHandle = null;
-    lastSyncTime = null;
-    await removeSyncHandle();
-    updateSyncStatus('disconnected');
-}
-
-async function initSync() {
-    try {
-        const handle = await loadSyncHandle();
-        if (!handle) { updateSyncStatus('disconnected'); return; }
-        const perm = await handle.queryPermission({ mode: 'readwrite' });
-        if (perm === 'granted') {
-            syncFileHandle = handle;
-            const fileData = await readSyncFile(handle);
-            if (fileData) {
-                theoryData = fileData;
-                localStorage.setItem('theoryData', JSON.stringify(theoryData));
-            }
-            updateSyncStatus('synced');
-        } else {
-            syncFileHandle = handle;
-            updateSyncStatus('needs-permission');
-        }
-    } catch (err) {
-        console.error('Sync init error:', err);
-        updateSyncStatus('disconnected');
-    }
-}
-
-async function requestSyncPermission() {
-    if (!syncFileHandle) return;
-    try {
-        const perm = await syncFileHandle.requestPermission({ mode: 'readwrite' });
-        if (perm === 'granted') {
-            const fileData = await readSyncFile(syncFileHandle);
-            if (fileData) {
-                theoryData = fileData;
-                localStorage.setItem('theoryData', JSON.stringify(theoryData));
-                updateAllDisplays();
-            }
-            updateSyncStatus('synced');
-        }
-    } catch (err) {
-        console.error('Permission request error:', err);
-    }
-}
-
-function updateSyncStatus(status, errorMsg) {
-    const statusEl = document.getElementById('sync-status');
-    const disconnectBtn = document.getElementById('sync-disconnect-btn');
-    if (!statusEl) return;
-    switch (status) {
-        case 'synced':
-            const timeStr = lastSyncTime ? lastSyncTime.toLocaleTimeString('ja-JP') : '';
-            const fileName = syncFileHandle ? syncFileHandle.name : '';
-            statusEl.innerHTML = '<span style="color: #27ae60;">● 同期中</span>' +
-                (fileName ? ' (' + fileName + ')' : '') +
-                (timeStr ? '<br><small style="color: var(--text-light);">最終同期: ' + timeStr + '</small>' : '');
-            disconnectBtn.style.display = '';
-            break;
-        case 'needs-permission':
-            statusEl.innerHTML = '<span style="color: #f39c12;">● 権限の再許可が必要です</span>' +
-                '<br><button class="btn btn-small btn-secondary" onclick="requestSyncPermission()" style="margin-top: 5px;">許可する</button>';
-            disconnectBtn.style.display = '';
-            break;
-        case 'error':
-            statusEl.innerHTML = '<span style="color: #e74c3c;">● 同期エラー</span>' +
-                (errorMsg ? '<br><small style="color: var(--text-light);">' + errorMsg + '</small>' : '');
-            disconnectBtn.style.display = '';
-            break;
-        default:
-            statusEl.innerHTML = '<span style="color: #95a5a6;">● 未設定</span>';
-            disconnectBtn.style.display = 'none';
-            break;
-    }
-}
 
 // ========================================
 // 日付ユーティリティ
@@ -799,7 +769,7 @@ function initializeEventListeners() {
     });
 
     // 教材管理モード
-    document.querySelectorAll('.mode-btn-row').forEach(btn => {
+    document.querySelectorAll('.mode-btn-row[data-mode]').forEach(btn => {
         btn.addEventListener('click', () => switchManagementMode(btn.dataset.mode));
     });
 
@@ -822,12 +792,6 @@ function initializeEventListeners() {
     document.getElementById('bulk-book-select').addEventListener('change', (e) => onBookSelectChange(e.target.value, 'bulk'));
     document.getElementById('bulk-chapter-select').addEventListener('change', (e) => onChapterSelectChange(e.target.value, 'bulk'));
 
-    // Google Drive 同期
-    document.getElementById('sync-setup-btn').addEventListener('click', () => setupSyncFile());
-    document.getElementById('sync-disconnect-btn').addEventListener('click', () => {
-        if (confirm('同期を解除しますか？\nローカルのデータはそのまま残ります。')) disconnectSync();
-    });
-
     // CSV
     document.getElementById('export-csv-btn').addEventListener('click', () => exportCSV());
     document.getElementById('import-csv-btn').addEventListener('click', () => document.getElementById('import-csv-input').click());
@@ -840,7 +804,6 @@ function initializeEventListeners() {
     // 復習コントロール
     document.getElementById('undo-eval-btn').addEventListener('click', () => undoLastEvaluation());
     document.getElementById('toggle-random-btn').addEventListener('click', () => toggleRandomOrder());
-    document.getElementById('toggle-answer-btn').addEventListener('click', () => toggleAnswerVisibility());
 
     // 設定パネル（設定タブ内に統合済み）
 
@@ -1028,6 +991,7 @@ function switchTab(tabName) {
 
     switch(tabName) {
         case 'today-review': updateTodayReview(); break;
+        case 'test-mode': setupTestSelectors(); break;
         case 'incorrect-review': displayIncorrectReview(); break;
         case 'all-theories': updateFilterSubjectSelect(); updateAllTheoriesList(); break;
         case 'calendar': updateCalendar(); break;
@@ -1269,8 +1233,6 @@ function displayCurrentCard(containerId = 'today-review-content') {
     const container = document.getElementById(containerId);
 
     isAnswerVisible = false;
-    const answerBtn = document.getElementById('toggle-answer-btn');
-    if (answerBtn) answerBtn.textContent = '👁️ 回答表示';
 
     if (currentReviewList.length === 0) {
         // 完了チェック
@@ -1790,7 +1752,7 @@ function showCalendarDetail(dateStr) {
 // ========================================
 
 function switchManagementMode(mode) {
-    document.querySelectorAll('.mode-btn-row').forEach(btn => btn.classList.remove('active'));
+    document.querySelectorAll('.mode-btn-row[data-mode]').forEach(btn => btn.classList.remove('active'));
     document.querySelector(`[data-mode="${mode}"]`).classList.add('active');
     document.getElementById('review-settings-mode').style.display = 'none';
     document.getElementById('register-mode').style.display = 'none';
@@ -2407,17 +2369,14 @@ function toggleRandomOrder() {
 
 function toggleAnswerVisibility() {
     isAnswerVisible = !isAnswerVisible;
-    const btn = document.getElementById('toggle-answer-btn');
     const answerSection = document.getElementById('answer-section-display');
     if (isAnswerVisible) {
-        btn.textContent = '🙈 非表示';
         if (answerSection) {
             answerSection.style.display = 'block';
             answerSection.classList.add('answer-reveal');
             answerSection.addEventListener('animationend', () => answerSection.classList.remove('answer-reveal'), { once: true });
         }
     } else {
-        btn.textContent = '👁️ 回答表示';
         if (answerSection) answerSection.style.display = 'none';
     }
 }
@@ -2885,4 +2844,419 @@ function renderSubjectProgress() {
 
     if (!html) html = '<p class="stats-empty">アクティブな科目がありません。</p>';
     container.innerHTML = html;
+}
+
+// ========================================
+// Test Mode
+// ========================================
+
+function setupTestSelectors() {
+    const subjectSelect = document.getElementById('test-subject-select');
+    subjectSelect.innerHTML = '<option value="">すべて</option>';
+    theoryData.subjects.forEach(s => {
+        const o = document.createElement('option');
+        o.value = s.name;
+        o.textContent = s.name;
+        subjectSelect.appendChild(o);
+    });
+    document.getElementById('test-book-select').innerHTML = '<option value="">すべて</option>';
+    document.getElementById('test-book-select').disabled = true;
+    document.getElementById('test-chapter-select').innerHTML = '<option value="">すべて</option>';
+    document.getElementById('test-chapter-select').disabled = true;
+    updateTestAvailableCount();
+}
+
+function onTestSubjectChange() {
+    const value = document.getElementById('test-subject-select').value;
+    const bookSelect = document.getElementById('test-book-select');
+    const chapterSelect = document.getElementById('test-chapter-select');
+    bookSelect.innerHTML = '<option value="">すべて</option>';
+    chapterSelect.innerHTML = '<option value="">すべて</option>';
+    chapterSelect.disabled = true;
+    if (!value) { bookSelect.disabled = true; updateTestAvailableCount(); return; }
+    const subject = theoryData.subjects.find(s => s.name === value);
+    if (!subject) { bookSelect.disabled = true; return; }
+    subject.books.forEach(b => {
+        const o = document.createElement('option');
+        o.value = b.name;
+        o.textContent = b.name;
+        bookSelect.appendChild(o);
+    });
+    bookSelect.disabled = false;
+    updateTestAvailableCount();
+}
+
+function onTestBookChange() {
+    const subjectName = document.getElementById('test-subject-select').value;
+    const bookName = document.getElementById('test-book-select').value;
+    const chapterSelect = document.getElementById('test-chapter-select');
+    chapterSelect.innerHTML = '<option value="">すべて</option>';
+    if (!bookName || !subjectName) { chapterSelect.disabled = true; updateTestAvailableCount(); return; }
+    const subject = theoryData.subjects.find(s => s.name === subjectName);
+    const book = subject && subject.books.find(b => b.name === bookName);
+    if (!book) { chapterSelect.disabled = true; return; }
+    book.chapters.forEach(ch => {
+        const o = document.createElement('option');
+        o.value = ch.name;
+        o.textContent = ch.name;
+        chapterSelect.appendChild(o);
+    });
+    chapterSelect.disabled = false;
+    updateTestAvailableCount();
+}
+
+function getTestCandidates() {
+    const subjectName = document.getElementById('test-subject-select').value;
+    const bookName = document.getElementById('test-book-select').value;
+    const chapterName = document.getElementById('test-chapter-select').value;
+    let theories = getAllTheories();
+    theories = theories.filter(t => t.learned);
+    if (subjectName) theories = theories.filter(t => t.subjectName === subjectName);
+    if (bookName) theories = theories.filter(t => t.bookName === bookName);
+    if (chapterName) theories = theories.filter(t => t.chapterName === chapterName);
+    return theories;
+}
+
+function updateTestAvailableCount() {
+    const candidates = getTestCandidates();
+    const el = document.getElementById('test-available-count');
+    if (el) el.textContent = `出題可能: ${candidates.length}問（既習のみ）`;
+}
+
+function startTest() {
+    const candidates = getTestCandidates();
+    if (candidates.length === 0) {
+        showToast('出題できる問題がありません。既習の問題を登録してください。', 'warning');
+        return;
+    }
+
+    const countMode = document.getElementById('test-count-mode').value;
+    const isRandom = document.getElementById('test-random').checked;
+    let questions = [...candidates];
+
+    if (isRandom) shuffleArray(questions);
+
+    if (countMode === 'custom') {
+        const count = Math.max(1, parseInt(document.getElementById('test-count-input').value) || 20);
+        questions = questions.slice(0, count);
+    }
+
+    testQuestions = questions;
+    testCurrentIndex = 0;
+    testResults = [];
+    testIsAnswerVisible = false;
+
+    document.getElementById('test-setup-area').style.display = 'none';
+    document.getElementById('test-execution-area').style.display = 'block';
+    document.getElementById('test-result-area').style.display = 'none';
+
+    displayTestCard();
+}
+
+function displayTestCard() {
+    if (testCurrentIndex >= testQuestions.length) {
+        showTestResults();
+        return;
+    }
+
+    const theory = testQuestions[testCurrentIndex];
+    const total = testQuestions.length;
+    testIsAnswerVisible = false;
+
+    document.getElementById('test-progress-text').textContent = `No.${testCurrentIndex + 1} / ${total}`;
+    const pct = Math.round((testCurrentIndex / total) * 100);
+    document.getElementById('test-progress-fill').style.width = pct + '%';
+
+    const container = document.getElementById('test-card-display');
+    container.innerHTML = `
+        <div class="theory-card">
+            <div class="card-header">
+                <div class="card-path">${theory.subjectName} &gt; ${theory.bookName} &gt; ${theory.chapterName}</div>
+                <div class="card-number">No.${testCurrentIndex + 1} / ${total}</div>
+            </div>
+            <div class="question-section" id="test-question-section" style="cursor: pointer;">
+                <h4>【問題】</h4>
+                <p>${formatQuestionText(theory)}</p>
+            </div>
+            <div class="answer-section" id="test-answer-section" style="display: none;">
+                <h4>【解答】</h4>
+                <p>${formatAnswerText(theory.answerText)}</p>
+            </div>
+            <div class="card-info">
+                <div class="current-eval">
+                    現在：<span class="eval-badge eval-${theory.evaluation.toLowerCase()}">${theory.evaluation}</span>
+                </div>
+            </div>
+        </div>
+    `;
+
+    // Tap to toggle answer
+    const questionSection = document.getElementById('test-question-section');
+    const answerSection = document.getElementById('test-answer-section');
+    const toggleTestAnswer = () => {
+        testIsAnswerVisible = !testIsAnswerVisible;
+        if (testIsAnswerVisible) {
+            answerSection.style.display = 'block';
+            answerSection.classList.add('answer-reveal');
+            answerSection.addEventListener('animationend', () => answerSection.classList.remove('answer-reveal'), { once: true });
+        } else {
+            answerSection.style.display = 'none';
+        }
+    };
+    questionSection.addEventListener('click', toggleTestAnswer);
+    answerSection.style.cursor = 'pointer';
+    answerSection.addEventListener('click', toggleTestAnswer);
+}
+
+function recordTestAnswer(correct) {
+    testResults.push({
+        theory: testQuestions[testCurrentIndex],
+        correct: correct
+    });
+    testCurrentIndex++;
+    displayTestCard();
+}
+
+function abortTest() {
+    if (!confirm('テストを中止しますか？')) return;
+    document.getElementById('test-setup-area').style.display = 'block';
+    document.getElementById('test-execution-area').style.display = 'none';
+    document.getElementById('test-result-area').style.display = 'none';
+}
+
+function showTestResults() {
+    document.getElementById('test-execution-area').style.display = 'none';
+    document.getElementById('test-result-area').style.display = 'block';
+
+    const total = testResults.length;
+    const correctCount = testResults.filter(r => r.correct).length;
+    const incorrectCount = total - correctCount;
+    const pct = total > 0 ? Math.round((correctCount / total) * 100) : 0;
+
+    let html = '';
+
+    // Score
+    html += `
+        <div class="test-result-score">
+            <div class="score-number">${pct}%</div>
+            <div class="score-label">正答率</div>
+            <div class="score-detail">${correctCount}問正解 / ${total}問中</div>
+        </div>
+    `;
+
+    // Eval breakdown bar chart
+    const evalGroups = {};
+    testResults.forEach(r => {
+        const ev = r.theory.evaluation;
+        if (!evalGroups[ev]) evalGroups[ev] = { correct: 0, total: 0 };
+        evalGroups[ev].total++;
+        if (r.correct) evalGroups[ev].correct++;
+    });
+
+    const evalColors = {
+        'S': 'var(--eval-s)', 'A': 'var(--eval-a)', 'B': 'var(--eval-b)',
+        'C': 'var(--eval-c)', 'D': 'var(--eval-d)', 'E': 'var(--eval-e)'
+    };
+
+    html += '<div class="test-result-section"><h3>評価別の正答率</h3>';
+    ['E', 'D', 'C', 'B', 'A', 'S'].forEach(ev => {
+        if (!evalGroups[ev]) return;
+        const g = evalGroups[ev];
+        const evPct = Math.round((g.correct / g.total) * 100);
+        html += `
+            <div class="test-eval-bar-row">
+                <span class="test-eval-bar-label">${ev}</span>
+                <div class="test-eval-bar-bg">
+                    <div class="test-eval-bar-fill" style="width: ${evPct}%; background: ${evalColors[ev] || '#999'};"></div>
+                </div>
+                <span class="test-eval-bar-pct">${g.correct}/${g.total} (${evPct}%)</span>
+            </div>
+        `;
+    });
+    html += '</div>';
+
+    // Subject breakdown
+    const subjectGroups = {};
+    testResults.forEach(r => {
+        const key = r.theory.subjectName;
+        if (!subjectGroups[key]) subjectGroups[key] = { correct: 0, total: 0 };
+        subjectGroups[key].total++;
+        if (r.correct) subjectGroups[key].correct++;
+    });
+
+    if (Object.keys(subjectGroups).length > 1) {
+        html += '<div class="test-result-section"><h3>科目別の正答率</h3>';
+        Object.entries(subjectGroups).forEach(([name, g]) => {
+            const sPct = Math.round((g.correct / g.total) * 100);
+            html += `
+                <div class="test-eval-bar-row">
+                    <span class="test-eval-bar-label" style="width: auto; min-width: 60px; text-align: left; font-size: 0.8rem;">${name}</span>
+                    <div class="test-eval-bar-bg">
+                        <div class="test-eval-bar-fill" style="width: ${sPct}%; background: var(--primary);"></div>
+                    </div>
+                    <span class="test-eval-bar-pct">${g.correct}/${g.total} (${sPct}%)</span>
+                </div>
+            `;
+        });
+        html += '</div>';
+    }
+
+    // Incorrect list
+    const incorrectResults = testResults.filter(r => !r.correct);
+    if (incorrectResults.length > 0) {
+        html += '<div class="test-result-section"><h3>間違えた問題（' + incorrectResults.length + '問）</h3>';
+        incorrectResults.forEach((r, i) => {
+            const t = r.theory;
+            html += `
+                <div class="test-incorrect-item" onclick="this.classList.toggle('expanded')">
+                    <div class="incorrect-question">
+                        <span>${t.questionText.substring(0, 50)}${t.questionText.length > 50 ? '...' : ''}</span>
+                        <span class="eval-badge eval-${t.evaluation.toLowerCase()}" style="flex-shrink: 0;">${t.evaluation}</span>
+                    </div>
+                    <div class="incorrect-detail">
+                        <div class="question-section" style="margin-bottom: 8px;">
+                            <h4>【問題】</h4>
+                            <p>${formatQuestionText(t)}</p>
+                        </div>
+                        <div class="answer-section">
+                            <h4>【解答】</h4>
+                            <p>${formatAnswerText(t.answerText)}</p>
+                        </div>
+                    </div>
+                </div>
+            `;
+        });
+        html += '</div>';
+    }
+
+    // Action buttons
+    html += `
+        <div class="test-result-actions">
+            <button class="btn btn-primary" onclick="restartTest()">🔄 もう一度テスト</button>
+            ${incorrectResults.length > 0 ? '<button class="btn btn-danger" onclick="retestIncorrect()">❌ 間違いだけ再テスト</button>' : ''}
+        </div>
+    `;
+
+    document.getElementById('test-result-area').innerHTML = html;
+}
+
+function restartTest() {
+    document.getElementById('test-setup-area').style.display = 'block';
+    document.getElementById('test-execution-area').style.display = 'none';
+    document.getElementById('test-result-area').style.display = 'none';
+    setupTestSelectors();
+}
+
+function retestIncorrect() {
+    const incorrectTheories = testResults.filter(r => !r.correct).map(r => r.theory);
+    if (incorrectTheories.length === 0) return;
+
+    testQuestions = [...incorrectTheories];
+    shuffleArray(testQuestions);
+    testCurrentIndex = 0;
+    testResults = [];
+    testIsAnswerVisible = false;
+
+    document.getElementById('test-setup-area').style.display = 'none';
+    document.getElementById('test-execution-area').style.display = 'block';
+    document.getElementById('test-result-area').style.display = 'none';
+
+    displayTestCard();
+}
+
+// ========================================
+// Tab Help
+// ========================================
+
+function showTabHelp(tabId) {
+    const helpTexts = {
+        'today-review': '問題文をタップで解答表示。正解/不正解で評価が変動します。スワイプで前後のカードに移動できます。',
+        'test-mode': '範囲を選択してテストモードで実力を確認できます。テスト結果は評価別・科目別に分析できます。',
+        'calendar': '日付をタップで、その日の復習予定を確認できます。色が濃いほど復習の負荷が高いことを示します。',
+        'incorrect-review': '今日の復習で不正解だった問題を再確認できます。夜の復習に最適です。',
+        'all-theories': '評価・科目・検索で問題を絞り込み。各問題の確認・編集・削除ができます。',
+        'statistics': '学習量・正答率・評価分布・科目別の進捗を確認できます。',
+        'management': '復習設定・教材登録・教材構造の管理・バックアップの各機能にアクセスできます。'
+    };
+
+    const text = helpTexts[tabId] || '';
+    if (!text) return;
+
+    const overlay = document.createElement('div');
+    overlay.className = 'help-modal-overlay';
+    overlay.innerHTML = `
+        <div class="help-modal-content">
+            <h3>操作ヘルプ</h3>
+            <p>${text}</p>
+            <button class="btn btn-primary" onclick="this.closest('.help-modal-overlay').remove()">OK</button>
+        </div>
+    `;
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+    document.body.appendChild(overlay);
+}
+
+// ========================================
+// Usage Guide
+// ========================================
+
+function showUsageGuide() {
+    const overlay = document.createElement('div');
+    overlay.className = 'guide-modal-overlay';
+    overlay.innerHTML = `
+        <div class="guide-modal-content">
+            <h2 style="text-align: center; color: var(--primary); margin-bottom: 20px; font-size: 1.2rem;">📖 推奨学習フロー</h2>
+
+            <div class="guide-step">
+                <div class="guide-step-number">1</div>
+                <div class="guide-step-content">
+                    <h4>教材登録</h4>
+                    <p>設定 → 教材登録 で問題と解答を登録します。一括登録も可能です。</p>
+                </div>
+            </div>
+
+            <div class="guide-step">
+                <div class="guide-step-number">2</div>
+                <div class="guide-step-content">
+                    <h4>初回学習</h4>
+                    <p>一覧タブで未習の問題を「既習」に変更して、初回の復習対象にします。</p>
+                </div>
+            </div>
+
+            <div class="guide-step">
+                <div class="guide-step-number">3</div>
+                <div class="guide-step-content">
+                    <h4>毎日の復習</h4>
+                    <p>「今日の復習」タブで日々の復習を行います。正解すると評価が上がり、復習間隔が伸びます。</p>
+                </div>
+            </div>
+
+            <div class="guide-step">
+                <div class="guide-step-number">4</div>
+                <div class="guide-step-content">
+                    <h4>弱点対策</h4>
+                    <p>「不正解」タブで今日間違えた問題を再確認。夜の復習に活用できます。</p>
+                </div>
+            </div>
+
+            <div class="guide-step">
+                <div class="guide-step-number">5</div>
+                <div class="guide-step-content">
+                    <h4>テスト</h4>
+                    <p>「テスト」タブで範囲を指定してテストモード。定着度を客観的に確認できます。</p>
+                </div>
+            </div>
+
+            <div class="guide-step">
+                <div class="guide-step-number">6</div>
+                <div class="guide-step-content">
+                    <h4>負荷管理</h4>
+                    <p>「負荷予測」カレンダーで今後の復習量を確認し、計画的に学習を進めましょう。</p>
+                </div>
+            </div>
+
+            <button class="btn btn-primary" style="width: 100%; margin-top: 10px;" onclick="this.closest('.guide-modal-overlay').remove()">閉じる</button>
+        </div>
+    `;
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+    document.body.appendChild(overlay);
 }
