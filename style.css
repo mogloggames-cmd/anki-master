@@ -495,7 +495,8 @@ button {
 .review-controls {
     display: flex;
     gap: 6px;
-    margin-bottom: 16px;
+    margin-bottom: 24px;
+    padding-bottom: 16px;
     align-items: center;
 }
 
@@ -1524,7 +1525,7 @@ button {
 
     .app-container {
         border-radius: 0;
-        padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+        padding-bottom: calc(100px + env(safe-area-inset-bottom, 0px));
     }
 
     .app-header {
