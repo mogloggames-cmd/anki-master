@@ -6,11 +6,12 @@
     <meta name="theme-color" content="#1e3a5f">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="apple-mobile-web-app-title" content="暗記マスター">
-    <meta name="application-name" content="暗記マスター">
-    <title>暗記マスター - フラッシュカード学習アプリ</title>
+    <meta name="apple-mobile-web-app-title" content="もぐら先生の暗記サポート">
+    <meta name="application-name" content="もぐら先生の暗記サポート">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://meta-labo.com; font-src 'self';">
+    <title>もぐら先生の暗記サポートアプリ</title>
     <link rel="manifest" href="manifest.json">
-    <link rel="apple-touch-icon" href="tax_tutor_icon.png">
+    <link rel="apple-touch-icon" href="mogura_sensei_icon.png">
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -18,7 +19,7 @@
     <div id="auth-screen" class="auth-screen">
         <div class="auth-container">
             <div class="auth-header">
-                <h1>暗記マスター</h1>
+                <h1>もぐら先生の暗記サポート</h1>
                 <p>フラッシュカード学習アプリ</p>
             </div>
             <div id="auth-form-login" class="auth-form">
@@ -32,9 +33,9 @@
                     <input type="password" id="login-password" class="auth-input" placeholder="6文字以上" autocomplete="current-password">
                 </div>
                 <div id="login-error" class="auth-error" style="display:none;"></div>
-                <button id="login-btn" class="auth-btn auth-btn-primary" onclick="handleLogin()">ログイン</button>
-                <p class="auth-switch">アカウントをお持ちでない方は <a href="#" onclick="showAuthForm('register'); return false;">新規登録</a></p>
-                <button class="auth-btn auth-btn-offline" onclick="startOfflineMode()">オフラインで使う</button>
+                <button id="login-btn" class="auth-btn auth-btn-primary">ログイン</button>
+                <p class="auth-switch">アカウントをお持ちでない方は <a href="#" id="auth-switch-register">新規登録</a></p>
+                <button class="auth-btn auth-btn-offline">オフラインで使う</button>
             </div>
             <div id="auth-form-register" class="auth-form" style="display:none;">
                 <h2>新規登録</h2>
@@ -51,15 +52,20 @@
                     <input type="password" id="register-password-confirm" class="auth-input" placeholder="もう一度入力" autocomplete="new-password">
                 </div>
                 <div id="register-error" class="auth-error" style="display:none;"></div>
-                <button id="register-btn" class="auth-btn auth-btn-primary" onclick="handleRegister()">アカウント作成</button>
-                <p class="auth-switch">既にアカウントをお持ちの方は <a href="#" onclick="showAuthForm('login'); return false;">ログイン</a></p>
+                <button id="register-btn" class="auth-btn auth-btn-primary">アカウント作成</button>
+                <p class="auth-switch">既にアカウントをお持ちの方は <a href="#" id="auth-switch-login">ログイン</a></p>
+            </div>
+            <div class="auth-legal-links">
+                <a href="#" data-legal="privacy">プライバシーポリシー</a>
+                <span>|</span>
+                <a href="#" data-legal="terms">利用規約</a>
             </div>
         </div>
     </div>
 
     <div class="app-container" id="app-container" style="display:none;">
         <header class="app-header">
-            <h1>暗記マスター</h1>
+            <h1>もぐら先生の暗記サポート</h1>
             <p class="subtitle">フラッシュカード学習アプリ</p>
             <button id="theme-toggle" class="theme-toggle-btn" title="ダークモード切り替え">🌙</button>
         </header>
@@ -90,7 +96,7 @@
         <!-- タブ1：今日の復習 -->
         <div class="tab-content active" id="today-review">
             <div style="display: flex; justify-content: flex-end; margin-bottom: 4px;">
-                <button class="help-btn" onclick="showTabHelp('today-review')">?</button>
+                <button class="help-btn" data-tab-help="today-review">?</button>
             </div>
             <div class="dashboard">
                 <div class="dashboard-summary">
@@ -142,7 +148,7 @@
         <div class="tab-content" id="test-mode">
             <div class="tab-heading">
                 <h2>テストモード</h2>
-                <button class="help-btn" onclick="showTabHelp('test-mode')">?</button>
+                <button class="help-btn" data-tab-help="test-mode">?</button>
             </div>
 
             <!-- Test Setup -->
@@ -150,26 +156,26 @@
                 <div class="test-setup">
                     <div class="form-row">
                         <label>科目:</label>
-                        <select id="test-subject-select" class="form-select" onchange="onTestSubjectChange()">
+                        <select id="test-subject-select" class="form-select">
                             <option value="">すべて</option>
                         </select>
                     </div>
                     <div class="form-row">
                         <label>問題集:</label>
-                        <select id="test-book-select" class="form-select" disabled onchange="onTestBookChange()">
+                        <select id="test-book-select" class="form-select" disabled>
                             <option value="">すべて</option>
                         </select>
                     </div>
                     <div class="form-row">
                         <label>単元:</label>
-                        <select id="test-chapter-select" class="form-select" disabled onchange="updateTestAvailableCount()">
+                        <select id="test-chapter-select" class="form-select" disabled>
                             <option value="">すべて</option>
                         </select>
                     </div>
                     <div class="form-row">
                         <label>出題数:</label>
                         <div style="display: flex; align-items: center; gap: 8px;">
-                            <select id="test-count-mode" class="form-select" style="width: auto;" onchange="document.getElementById('test-count-input').disabled = this.value === 'all';">
+                            <select id="test-count-mode" class="form-select" style="width: auto;">
                                 <option value="all">全問</option>
                                 <option value="custom">指定</option>
                             </select>
@@ -184,7 +190,7 @@
                         </label>
                     </div>
                     <div id="test-available-count" style="margin-bottom: 12px; font-size: 0.85rem; color: var(--text-light);"></div>
-                    <button class="btn btn-primary" style="width: 100%; padding: 14px; font-size: 1rem;" onclick="startTest()">📝 テスト開始</button>
+                    <button id="start-test-btn" class="btn btn-primary" style="width: 100%; padding: 14px; font-size: 1rem;">📝 テスト開始</button>
                 </div>
             </div>
 
@@ -198,11 +204,11 @@
                 </div>
                 <div id="test-card-display" class="card-display-area"></div>
                 <div class="test-answer-buttons">
-                    <button class="btn" style="background: #4CAF50; color: white;" onclick="recordTestAnswer(true)">⭕ 正解</button>
-                    <button class="btn" style="background: #f44336; color: white;" onclick="recordTestAnswer(false)">❌ 不正解</button>
+                    <button id="test-correct-btn" class="btn" style="background: #4CAF50; color: white;">⭕ 正解</button>
+                    <button id="test-incorrect-btn" class="btn" style="background: #f44336; color: white;">❌ 不正解</button>
                 </div>
                 <div style="margin-top: 12px; text-align: center;">
-                    <button class="btn btn-secondary btn-small" onclick="abortTest()">テストを中止</button>
+                    <button id="abort-test-btn" class="btn btn-secondary btn-small">テストを中止</button>
                 </div>
             </div>
 
@@ -216,7 +222,7 @@
             <div class="review-header">
                 <div class="tab-heading">
                     <h2>今日の不正解</h2>
-                    <button class="help-btn" onclick="showTabHelp('incorrect-review')">?</button>
+                    <button class="help-btn" data-tab-help="incorrect-review">?</button>
                 </div>
                 <div class="review-stats">
                     <span class="stat-badge stat-total">不正解: <span id="incorrect-total">0</span>問</span>
@@ -232,7 +238,7 @@
         <div class="tab-content" id="statistics">
             <div class="tab-heading">
                 <h2>学習統計</h2>
-                <button class="help-btn" onclick="showTabHelp('statistics')">?</button>
+                <button class="help-btn" data-tab-help="statistics">?</button>
             </div>
 
             <!-- 連続学習・累計 -->
@@ -280,10 +286,10 @@
         <div class="tab-content" id="management">
             <div class="tab-heading">
                 <h2>設定</h2>
-                <button class="help-btn" onclick="showTabHelp('management')">?</button>
+                <button class="help-btn" data-tab-help="management">?</button>
             </div>
             <div class="mode-selector-grid">
-                <button class="mode-btn-row" onclick="showUsageGuide(); return false;" style="background: var(--question-bg); border-color: var(--accent); color: var(--accent);">📖 使い方ガイド</button>
+                <button id="usage-guide-btn" class="mode-btn-row" style="background: var(--question-bg); border-color: var(--accent); color: var(--accent);">📖 使い方ガイド</button>
                 <button class="mode-btn-row active" data-mode="review-settings">🎮 復習設定</button>
                 <button class="mode-btn-row" data-mode="register">📝 教材登録</button>
                 <button class="mode-btn-row" data-mode="structure">📚 教材構造</button>
@@ -296,23 +302,23 @@
                     <div class="settings-group">
                         <label>評価モード</label>
                         <div class="btn-row">
-                            <button id="eval-mode-simple-btn" class="btn btn-small btn-primary" onclick="setEvalMode('simple')">正誤</button>
-                            <button id="eval-mode-detail-btn" class="btn btn-small btn-secondary" onclick="setEvalMode('detail')">A~E</button>
+                            <button id="eval-mode-simple-btn" class="btn btn-small btn-primary">正誤</button>
+                            <button id="eval-mode-detail-btn" class="btn btn-small btn-secondary">A~E</button>
                         </div>
                     </div>
                     <div class="settings-group">
                         <label>ボタンサイズ</label>
                         <div class="btn-row">
-                            <button id="btn-size-small-btn" class="btn btn-small btn-primary" onclick="setBtnSize('small')">小</button>
-                            <button id="btn-size-large-btn" class="btn btn-small btn-secondary" onclick="setBtnSize('large')">大</button>
+                            <button id="btn-size-small-btn" class="btn btn-small btn-primary">小</button>
+                            <button id="btn-size-large-btn" class="btn btn-small btn-secondary">大</button>
                         </div>
                     </div>
                     <div class="settings-group">
                         <label>不正解モード</label>
                         <div class="btn-row">
-                            <button id="incorrect-mode-strict" class="btn btn-small btn-secondary" onclick="setIncorrectMode('strict')">ストイック</button>
-                            <button id="incorrect-mode-normal" class="btn btn-small btn-primary" onclick="setIncorrectMode('normal')">ノーマル</button>
-                            <button id="incorrect-mode-gentle" class="btn btn-small btn-secondary" onclick="setIncorrectMode('gentle')">やさしい</button>
+                            <button id="incorrect-mode-strict" class="btn btn-small btn-secondary">ストイック</button>
+                            <button id="incorrect-mode-normal" class="btn btn-small btn-primary">ノーマル</button>
+                            <button id="incorrect-mode-gentle" class="btn btn-small btn-secondary">やさしい</button>
                         </div>
                     </div>
                     <div class="settings-group">
@@ -444,12 +450,12 @@
                         </div>
                         <div id="account-sync-status" style="margin-bottom: 12px; padding: 8px; background: var(--card-bg); border-radius: 6px; border: 1px solid var(--border-color); font-size: 0.85rem; display: none;"></div>
                         <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
-                            <button class="btn btn-primary" style="flex: 1;" onclick="manualSyncPush()">⬆️ 手動送信</button>
-                            <button class="btn btn-primary" style="flex: 1;" onclick="manualSyncPull()">⬇️ 手動受信</button>
+                            <button id="manual-sync-push-btn" class="btn btn-primary" style="flex: 1;">⬆️ 手動送信</button>
+                            <button id="manual-sync-pull-btn" class="btn btn-primary" style="flex: 1;">⬇️ 手動受信</button>
                         </div>
                         <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-                            <button class="btn btn-secondary btn-small" style="flex: 1;" onclick="showChangePassword()">🔑 パスワード変更</button>
-                            <button class="btn btn-secondary btn-small" style="flex: 1;" onclick="handleLogout()">🚪 ログアウト</button>
+                            <button id="change-password-btn" class="btn btn-secondary btn-small" style="flex: 1;">🔑 パスワード変更</button>
+                            <button id="logout-btn" class="btn btn-secondary btn-small" style="flex: 1;">🚪 ログアウト</button>
                         </div>
                     </div>
 
@@ -457,9 +463,9 @@
                         <h4 style="color: var(--primary);">📱 JSONバックアップ</h4>
                         <p style="margin-bottom: 12px; line-height: 1.6; font-size: 0.9rem;">全データをJSONファイルとして保存・復元できます。iPhoneでも使えます。</p>
                         <div style="display: flex; gap: 10px; flex-wrap: wrap;">
-                            <button id="export-json-btn" class="btn btn-primary" style="flex: 1;" onclick="exportJSON()">💾 エクスポート</button>
-                            <button class="btn btn-secondary" style="flex: 1;" onclick="document.getElementById('import-json-input').click()">📂 インポート</button>
-                            <input type="file" id="import-json-input" accept=".json" style="display: none;" onchange="importJSON(this.files[0])">
+                            <button id="export-json-btn" class="btn btn-primary" style="flex: 1;">💾 エクスポート</button>
+                            <button id="import-json-trigger-btn" class="btn btn-secondary" style="flex: 1;">📂 インポート</button>
+                            <input type="file" id="import-json-input" accept=".json" style="display: none;">
                         </div>
                     </div>
 
@@ -487,9 +493,9 @@
                                 </label>
                             </div>
                             <div style="display: flex; gap: 6px; flex-wrap: wrap;">
-                                <button class="btn btn-small btn-secondary" onclick="setExportFilter(['E'])">Eのみ</button>
-                                <button class="btn btn-small btn-secondary" onclick="setExportFilter(['E','D'])">E・D</button>
-                                <button class="btn btn-small btn-secondary" onclick="setExportFilter(['E','D','C','B','A'])">すべて</button>
+                                <button class="btn btn-small btn-secondary" data-export-filter="E">Eのみ</button>
+                                <button class="btn btn-small btn-secondary" data-export-filter="E,D">E・D</button>
+                                <button class="btn btn-small btn-secondary" data-export-filter="E,D,C,B,A">すべて</button>
                             </div>
                             <div id="export-filter-count" style="margin-top: 8px; font-size: 0.85rem; color: var(--text-light);"></div>
                         </div>
@@ -526,6 +532,14 @@
                     <div class="backup-section">
                         <button id="bulk-unlearn-e-btn" class="btn btn-secondary" style="width: 100%;">🆕 E評価を一括で未習にする</button>
                     </div>
+
+                    <hr style="margin: 24px 0; border: none; border-top: 1px solid var(--border-color);">
+
+                    <div style="text-align: center; font-size: 0.8rem; color: var(--text-light);">
+                        <a href="#" data-legal="privacy" style="color: var(--accent); text-decoration: none;">プライバシーポリシー</a>
+                        <span style="margin: 0 8px;">|</span>
+                        <a href="#" data-legal="terms" style="color: var(--accent); text-decoration: none;">利用規約</a>
+                    </div>
                 </div>
             </div>
         </div>
@@ -541,7 +555,7 @@
 
     <div id="edit-modal" class="modal" style="display:none;">
         <div class="modal-content">
-            <span class="modal-close" onclick="closeEditModal()">&times;</span>
+            <span class="modal-close">&times;</span>
             <h2 style="margin-bottom: 20px; color: var(--primary);">✏️ 理論の編集</h2>
             <div class="form-section">
                 <input type="hidden" id="edit-theory-id">
@@ -551,8 +565,8 @@
                 <div class="form-row"><label>問題文:</label><textarea id="edit-question-text" class="form-textarea" rows="5"></textarea></div>
                 <div class="form-row"><label>解答:</label><textarea id="edit-answer-text" class="form-textarea" rows="5"></textarea></div>
                 <div class="form-actions">
-                    <button onclick="saveEditedTheory()" class="btn btn-success">💾 保存</button>
-                    <button onclick="closeEditModal()" class="btn btn-secondary">キャンセル</button>
+                    <button id="save-edited-theory-btn" class="btn btn-success">💾 保存</button>
+                    <button class="btn btn-secondary">キャンセル</button>
                 </div>
             </div>
         </div>
@@ -560,7 +574,7 @@
 
     <div id="structure-edit-modal" class="modal" style="display:none;">
         <div class="modal-content">
-            <span class="modal-close" onclick="closeStructureEditModal()">&times;</span>
+            <span class="modal-close">&times;</span>
             <h2 style="margin-bottom: 20px; color: var(--primary);">✏️ 名称の編集</h2>
             <div class="form-section">
                 <input type="hidden" id="structure-edit-type">
@@ -569,8 +583,8 @@
                 <input type="hidden" id="structure-edit-grandparent-index">
                 <div class="form-row"><label id="structure-edit-label">名称:</label><input type="text" id="structure-edit-name" class="form-input"></div>
                 <div class="form-actions">
-                    <button onclick="saveStructureEdit()" class="btn btn-success">💾 保存</button>
-                    <button onclick="closeStructureEditModal()" class="btn btn-secondary">キャンセル</button>
+                    <button id="save-structure-edit-btn" class="btn btn-success">💾 保存</button>
+                    <button class="btn btn-secondary">キャンセル</button>
                 </div>
             </div>
         </div>
@@ -578,19 +592,54 @@
 
     <div id="move-modal" class="modal" style="display:none;">
         <div class="modal-content">
-            <span class="modal-close" onclick="closeMoveModal()">&times;</span>
+            <span class="modal-close">&times;</span>
             <h2 style="margin-bottom: 20px; color: var(--primary);">📦 問題の移動</h2>
             <div class="form-section">
                 <input type="hidden" id="move-theory-id">
                 <div id="move-theory-preview" style="background: #f0f4ff; border-left: 4px solid var(--primary); padding: 12px; border-radius: 5px; margin-bottom: 16px; font-size: 0.85rem; color: var(--secondary); line-height: 1.5;"></div>
-                <div class="form-row"><label>科目:</label><select id="move-subject-select" class="form-select" onchange="onMoveSubjectChange(this.value)"><option value="">-- 科目を選択 --</option></select></div>
-                <div class="form-row"><label>問題集:</label><select id="move-book-select" class="form-select" onchange="onMoveBookChange(this.value)" disabled><option value="">-- 問題集を選択 --</option></select></div>
+                <div class="form-row"><label>科目:</label><select id="move-subject-select" class="form-select"><option value="">-- 科目を選択 --</option></select></div>
+                <div class="form-row"><label>問題集:</label><select id="move-book-select" class="form-select" disabled><option value="">-- 問題集を選択 --</option></select></div>
                 <div class="form-row"><label>単元:</label><select id="move-chapter-select" class="form-select" disabled><option value="">-- 単元を選択 --</option></select></div>
                 <div class="form-actions">
-                    <button onclick="saveTheoryMove()" class="btn btn-primary">📦 移動する</button>
-                    <button onclick="closeMoveModal()" class="btn btn-secondary">キャンセル</button>
+                    <button id="save-theory-move-btn" class="btn btn-primary">📦 移動する</button>
+                    <button class="btn btn-secondary">キャンセル</button>
                 </div>
             </div>
+        </div>
+    </div>
+
+    <!-- パスワード変更モーダル -->
+    <div id="password-modal" class="modal" style="display:none;">
+        <div class="modal-content">
+            <span class="modal-close" id="password-modal-close">&times;</span>
+            <h2 style="margin-bottom: 20px; color: var(--primary);">🔑 パスワード変更</h2>
+            <div class="form-section">
+                <div class="form-row">
+                    <label>現在のパスワード:</label>
+                    <input type="password" id="current-password-input" class="form-input" placeholder="現在のパスワード" autocomplete="current-password">
+                </div>
+                <div class="form-row">
+                    <label>新しいパスワード:</label>
+                    <input type="password" id="new-password-input" class="form-input" placeholder="6文字以上" autocomplete="new-password">
+                </div>
+                <div class="form-row">
+                    <label>新しいパスワード（確認）:</label>
+                    <input type="password" id="new-password-confirm-input" class="form-input" placeholder="もう一度入力" autocomplete="new-password">
+                </div>
+                <div id="password-change-error" class="auth-error" style="display:none;"></div>
+                <div class="form-actions">
+                    <button id="password-change-submit" class="btn btn-success">🔑 変更する</button>
+                    <button id="password-change-cancel" class="btn btn-secondary">キャンセル</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 法的ページモーダル -->
+    <div id="legal-modal" class="modal" style="display:none;">
+        <div class="modal-content" style="max-height: 80vh; overflow-y: auto;">
+            <span class="modal-close" id="legal-modal-close">&times;</span>
+            <div id="legal-modal-body"></div>
         </div>
     </div>
 

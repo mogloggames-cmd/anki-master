@@ -72,7 +72,92 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
     await checkAuthAndInit();
+    initStaticEventListeners();
 });
+
+// ========================================
+// 静的イベントリスナー
+// ========================================
+
+function initStaticEventListeners() {
+    // 認証画面
+    document.getElementById('login-btn').addEventListener('click', handleLogin);
+    document.getElementById('register-btn').addEventListener('click', handleRegister);
+    document.getElementById('auth-switch-register').addEventListener('click', (e) => { e.preventDefault(); showAuthForm('register'); });
+    document.getElementById('auth-switch-login').addEventListener('click', (e) => { e.preventDefault(); showAuthForm('login'); });
+    document.querySelector('.auth-btn-offline').addEventListener('click', startOfflineMode);
+
+    // 法的ページリンク（複数箇所）
+    document.querySelectorAll('[data-legal]').forEach(el => {
+        el.addEventListener('click', (e) => { e.preventDefault(); showLegalPage(el.dataset.legal); });
+    });
+
+    // ヘルプボタン
+    document.querySelectorAll('[data-tab-help]').forEach(el => {
+        el.addEventListener('click', () => showTabHelp(el.dataset.tabHelp));
+    });
+
+    // テスト設定
+    document.getElementById('test-subject-select').addEventListener('change', onTestSubjectChange);
+    document.getElementById('test-book-select').addEventListener('change', onTestBookChange);
+    document.getElementById('test-chapter-select').addEventListener('change', updateTestAvailableCount);
+    document.getElementById('test-count-mode').addEventListener('change', function() {
+        document.getElementById('test-count-input').disabled = this.value === 'all';
+    });
+    document.getElementById('start-test-btn').addEventListener('click', startTest);
+    document.getElementById('test-correct-btn').addEventListener('click', () => recordTestAnswer(true));
+    document.getElementById('test-incorrect-btn').addEventListener('click', () => recordTestAnswer(false));
+    document.getElementById('abort-test-btn').addEventListener('click', abortTest);
+
+    // 設定タブ
+    document.getElementById('usage-guide-btn').addEventListener('click', (e) => { e.preventDefault(); showUsageGuide(); });
+    document.getElementById('eval-mode-simple-btn').addEventListener('click', () => setEvalMode('simple'));
+    document.getElementById('eval-mode-detail-btn').addEventListener('click', () => setEvalMode('detail'));
+    document.getElementById('btn-size-small-btn').addEventListener('click', () => setBtnSize('small'));
+    document.getElementById('btn-size-large-btn').addEventListener('click', () => setBtnSize('large'));
+    document.getElementById('incorrect-mode-strict').addEventListener('click', () => setIncorrectMode('strict'));
+    document.getElementById('incorrect-mode-normal').addEventListener('click', () => setIncorrectMode('normal'));
+    document.getElementById('incorrect-mode-gentle').addEventListener('click', () => setIncorrectMode('gentle'));
+
+    // バックアップ・同期
+    document.getElementById('manual-sync-push-btn').addEventListener('click', manualSyncPush);
+    document.getElementById('manual-sync-pull-btn').addEventListener('click', manualSyncPull);
+    document.getElementById('change-password-btn').addEventListener('click', showChangePassword);
+    document.getElementById('logout-btn').addEventListener('click', handleLogout);
+    document.getElementById('export-json-btn').addEventListener('click', exportJSON);
+    document.getElementById('import-json-trigger-btn').addEventListener('click', () => document.getElementById('import-json-input').click());
+    document.getElementById('import-json-input').addEventListener('change', function() { importJSON(this.files[0]); });
+
+    // CSVエクスポートフィルター
+    document.querySelectorAll('[data-export-filter]').forEach(el => {
+        el.addEventListener('click', () => setExportFilter(el.dataset.exportFilter.split(',')));
+    });
+
+    // 編集モーダル
+    document.getElementById('save-edited-theory-btn').addEventListener('click', saveEditedTheory);
+    document.querySelectorAll('#edit-modal .modal-close, #edit-modal .btn-secondary').forEach(el => {
+        el.addEventListener('click', closeEditModal);
+    });
+
+    // 構造編集モーダル
+    document.getElementById('save-structure-edit-btn').addEventListener('click', saveStructureEdit);
+    document.querySelectorAll('#structure-edit-modal .modal-close, #structure-edit-modal .btn-secondary').forEach(el => {
+        el.addEventListener('click', closeStructureEditModal);
+    });
+
+    // 移動モーダル
+    document.getElementById('save-theory-move-btn').addEventListener('click', saveTheoryMove);
+    document.querySelectorAll('#move-modal .modal-close, #move-modal .btn-secondary').forEach(el => {
+        el.addEventListener('click', closeMoveModal);
+    });
+    document.getElementById('move-subject-select').addEventListener('change', function() { onMoveSubjectChange(this.value); });
+    document.getElementById('move-book-select').addEventListener('change', function() { onMoveBookChange(this.value); });
+
+    // 法的ページモーダル閉じる
+    document.getElementById('legal-modal-close').addEventListener('click', () => {
+        document.getElementById('legal-modal').style.display = 'none';
+    });
+}
 
 // ========================================
 // ダークモード
@@ -518,19 +603,34 @@ async function manualSyncPull() {
 
 // password change
 function showChangePassword() {
-    const current = prompt('現在のパスワードを入力:');
-    if (!current) return;
-    const newPass = prompt('新しいパスワードを入力（6文字以上）:');
-    if (!newPass) return;
-    if (newPass.length < 6) { showToast('パスワードは6文字以上にしてください', 'warning'); return; }
+    const modal = document.getElementById('password-modal');
+    document.getElementById('current-password-input').value = '';
+    document.getElementById('new-password-input').value = '';
+    document.getElementById('new-password-confirm-input').value = '';
+    const errorEl = document.getElementById('password-change-error');
+    errorEl.style.display = 'none';
+    modal.style.display = 'flex';
 
-    apiRequest('change_password', 'POST', { currentPassword: current, newPassword: newPass })
-        .then(resp => resp.json())
-        .then(result => {
-            if (result.error) { showToast(result.error, 'error'); return; }
-            showToast('パスワードを変更しました', 'success');
-        })
-        .catch(() => showToast('パスワード変更に失敗しました', 'error'));
+    document.getElementById('password-change-submit').onclick = () => {
+        const current = document.getElementById('current-password-input').value;
+        const newPass = document.getElementById('new-password-input').value;
+        const confirmPass = document.getElementById('new-password-confirm-input').value;
+        if (!current) { errorEl.textContent = '現在のパスワードを入力してください'; errorEl.style.display = 'block'; return; }
+        if (newPass.length < 6) { errorEl.textContent = 'パスワードは6文字以上にしてください'; errorEl.style.display = 'block'; return; }
+        if (newPass !== confirmPass) { errorEl.textContent = 'パスワードが一致しません'; errorEl.style.display = 'block'; return; }
+        errorEl.style.display = 'none';
+
+        apiRequest('change_password', 'POST', { currentPassword: current, newPassword: newPass })
+            .then(resp => resp.json())
+            .then(result => {
+                if (result.error) { errorEl.textContent = result.error; errorEl.style.display = 'block'; return; }
+                modal.style.display = 'none';
+                showToast('パスワードを変更しました', 'success');
+            })
+            .catch(() => { errorEl.textContent = 'パスワード変更に失敗しました'; errorEl.style.display = 'block'; });
+    };
+    document.getElementById('password-change-cancel').onclick = () => { modal.style.display = 'none'; };
+    document.getElementById('password-modal-close').onclick = () => { modal.style.display = 'none'; };
 }
 
 function countAllTheories(data) {
@@ -555,12 +655,12 @@ function saveDataLocal() {
 function exportJSON() {
     const json = JSON.stringify(theoryData, null, 2);
     const blob = new Blob([json], { type: 'application/json' });
-    const filename = `anki_master_backup_${getTodayString()}.json`;
+    const filename = `mogura_sensei_backup_${getTodayString()}.json`;
 
     if (navigator.share && navigator.canShare && navigator.canShare({ files: [new File([blob], filename)] })) {
         navigator.share({
             files: [new File([blob], filename, { type: 'application/json' })],
-            title: '暗記マスター バックアップ'
+            title: 'もぐら先生の暗記サポート バックアップ'
         }).then(() => showToast('バックアップを共有しました', 'success')).catch(() => {});
     } else {
         const url = URL.createObjectURL(blob);
@@ -663,7 +763,7 @@ function loadData() {
                                     theories: [
                                         {
                                             id: generateId(),
-                                            questionText: "暗記マスターへようこそ！\nこれはサンプルの問題です。（　①　）に入る言葉は？",
+                                            questionText: "もぐら先生の暗記サポートへようこそ！\nこれはサンプルの問題です。（　①　）に入る言葉は？",
                                             answerText: "①サンプル回答\n\n設定タブから問題を登録してみましょう。",
                                             evaluation: "E",
                                             nextReview: getTodayStringStatic(),
@@ -1345,11 +1445,16 @@ function createTheoryCard(theory, showEvalButtons = false) {
     return html;
 }
 
+function escapeHTML(str) {
+    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+}
+
 function formatQuestionText(theory) {
-    return theory.questionText.replace(/\n/g, '<br>');
+    return escapeHTML(theory.questionText).replace(/\n/g, '<br>');
 }
 
 function formatAnswerText(text) {
+    text = escapeHTML(text);
     text = text.replace(/__([^_]+)__/g, '<u style="text-decoration: underline; font-weight: bold;">$1</u>');
     return text.replace(/\n/g, '<br>');
 }
@@ -2554,7 +2659,7 @@ function exportCSV() {
     const csvContent = rows.map(row => row.map(escapeCSVField).join(',')).join('\r\n');
     const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
     const filterLabel = selectedEvals.length === 5 ? 'all' : selectedEvals.join('');
-    const filename = `anki_master_${filterLabel}_${getTodayString()}.csv`;
+    const filename = `mogura_sensei_${filterLabel}_${getTodayString()}.csv`;
 
     // iOS Safari: try share API first, then fallback to download link
     if (navigator.share && navigator.canShare && navigator.canShare({ files: [new File([blob], filename)] })) {
@@ -3270,4 +3375,138 @@ function showUsageGuide() {
     `;
     overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
     document.body.appendChild(overlay);
+}
+
+// ========================================
+// 法的ページ（プライバシーポリシー・利用規約）
+// ========================================
+
+function showLegalPage(type) {
+    const modal = document.getElementById('legal-modal');
+    const body = document.getElementById('legal-modal-body');
+    body.innerHTML = type === 'privacy' ? getPrivacyPolicyHTML() : getTermsHTML();
+    modal.style.display = 'flex';
+}
+
+function getPrivacyPolicyHTML() {
+    return `
+        <h2 style="color: var(--primary); margin-bottom: 16px;">プライバシーポリシー</h2>
+        <p style="color: var(--text-light); margin-bottom: 16px; font-size: 0.85rem;">最終更新日: 2026年4月1日</p>
+
+        <h3>1. はじめに</h3>
+        <p>もぐら先生の暗記サポートアプリ（以下「本アプリ」）は、ユーザーのプライバシーを尊重し、個人情報の保護に努めます。本プライバシーポリシーは、本アプリが収集・利用する情報について説明します。</p>
+
+        <h3>2. 収集する情報</h3>
+        <h4>2.1 アカウント情報</h4>
+        <p>アカウント登録時に、以下の情報を収集します。</p>
+        <ul>
+            <li>メールアドレス</li>
+            <li>パスワード（ハッシュ化して保存）</li>
+        </ul>
+
+        <h4>2.2 学習データ</h4>
+        <p>本アプリの利用に伴い、以下のデータが保存されます。</p>
+        <ul>
+            <li>登録した問題・解答のテキスト</li>
+            <li>学習評価（S/A/B/C/D/E）・復習日時</li>
+            <li>学習履歴（日別の学習回数・正答率）</li>
+        </ul>
+
+        <h4>2.3 自動的に収集される情報</h4>
+        <p>本アプリは、アクセス解析ツールやトラッキングツールを使用しません。Cookie、広告ID、位置情報等の収集は行いません。</p>
+
+        <h3>3. 情報の利用目的</h3>
+        <p>収集した情報は、以下の目的にのみ使用します。</p>
+        <ul>
+            <li>アカウント認証およびログイン状態の管理</li>
+            <li>デバイス間のデータ同期</li>
+            <li>復習スケジュールの計算</li>
+        </ul>
+        <p>第三者への提供、広告目的での利用は一切行いません。</p>
+
+        <h3>4. データの保存場所</h3>
+        <ul>
+            <li><strong>端末内:</strong> 学習データはブラウザのlocalStorageに保存されます。</li>
+            <li><strong>サーバー:</strong> アカウント登録時は、日本国内のサーバー（エックスサーバー）にデータが同期・保存されます。</li>
+        </ul>
+
+        <h3>5. データの管理・削除</h3>
+        <ul>
+            <li>ユーザーは、設定画面からいつでもデータのエクスポート（バックアップ）が可能です。</li>
+            <li>アカウント削除を行うと、サーバー上の全データが削除されます。</li>
+            <li>オフラインモードでの利用時は、サーバーへのデータ送信は行われません。</li>
+        </ul>
+
+        <h3>6. セキュリティ</h3>
+        <p>パスワードはハッシュ化して保存し、通信はHTTPSで暗号化されます。ただし、インターネット上の通信においてセキュリティを完全に保証するものではありません。</p>
+
+        <h3>7. お子様のプライバシー</h3>
+        <p>本アプリは、13歳未満のお子様を対象としていません。13歳未満の方がアカウントを作成されていることが判明した場合、速やかに当該アカウントを削除します。</p>
+
+        <h3>8. プライバシーポリシーの変更</h3>
+        <p>本ポリシーは、必要に応じて改定することがあります。重要な変更がある場合は、アプリ内で通知します。</p>
+
+        <h3>9. お問い合わせ</h3>
+        <p>プライバシーに関するお問い合わせは、以下までご連絡ください。</p>
+        <p style="padding: 10px; background: var(--bg-surface); border-radius: 6px;">メール: contact@meta-labo.com</p>
+    `;
+}
+
+function getTermsHTML() {
+    return `
+        <h2 style="color: var(--primary); margin-bottom: 16px;">利用規約</h2>
+        <p style="color: var(--text-light); margin-bottom: 16px; font-size: 0.85rem;">最終更新日: 2026年4月1日</p>
+
+        <h3>第1条（適用）</h3>
+        <p>本規約は、もぐら先生の暗記サポートアプリ（以下「本アプリ」）の利用に関する条件を定めるものです。ユーザーは、本アプリを利用することにより、本規約に同意したものとみなされます。</p>
+
+        <h3>第2条（アカウント）</h3>
+        <ol>
+            <li>ユーザーは、正確な情報を登録するものとします。</li>
+            <li>アカウントの管理責任はユーザーにあります。パスワードの漏洩等による損害について、運営者は責任を負いません。</li>
+            <li>一人のユーザーが複数のアカウントを作成することは禁止します。</li>
+        </ol>
+
+        <h3>第3条（禁止事項）</h3>
+        <p>ユーザーは、以下の行為を行ってはなりません。</p>
+        <ol>
+            <li>法令または公序良俗に違反する行為</li>
+            <li>他者の著作権、知的財産権その他の権利を侵害する行為</li>
+            <li>サーバーやネットワークに過度の負荷をかける行為</li>
+            <li>本アプリの運営を妨害する行為</li>
+            <li>不正アクセスまたはこれを試みる行為</li>
+            <li>他のユーザーの情報を収集する行為</li>
+        </ol>
+
+        <h3>第4条（本アプリの提供）</h3>
+        <ol>
+            <li>運営者は、事前の通知なく本アプリの内容を変更、または提供を中止することができます。</li>
+            <li>運営者は、本アプリの提供の中断・停止等により生じた損害について、理由を問わず責任を負いません。</li>
+        </ol>
+
+        <h3>第5条（免責事項）</h3>
+        <ol>
+            <li>本アプリは「現状有姿」で提供されます。運営者は、本アプリの正確性、完全性、有用性等について、いかなる保証も行いません。</li>
+            <li>ユーザーが本アプリに登録したデータの消失・破損について、運営者は責任を負いません。重要なデータは定期的にバックアップを行ってください。</li>
+            <li>本アプリの利用により生じた試験の合否等の結果について、運営者は一切の責任を負いません。</li>
+        </ol>
+
+        <h3>第6条（知的財産権）</h3>
+        <ol>
+            <li>本アプリに関する著作権、商標権その他の知的財産権は運営者に帰属します。</li>
+            <li>ユーザーが登録した問題・解答データの著作権はユーザーに帰属します。ただし、第三者の著作物を登録する場合、ユーザーは自己の責任において適法性を確認するものとします。</li>
+        </ol>
+
+        <h3>第7条（アカウントの停止・削除）</h3>
+        <p>運営者は、ユーザーが本規約に違反した場合、事前の通知なくアカウントを停止または削除できるものとします。</p>
+
+        <h3>第8条（規約の変更）</h3>
+        <p>運営者は、本規約を変更できるものとします。変更後の規約は、本アプリ内に掲示した時点で効力を生じます。</p>
+
+        <h3>第9条（準拠法・管轄裁判所）</h3>
+        <p>本規約は日本法に準拠し、本アプリに関する紛争については、運営者の所在地を管轄する裁判所を第一審の専属的合意管轄裁判所とします。</p>
+
+        <h3>第10条（お問い合わせ）</h3>
+        <p style="padding: 10px; background: var(--bg-surface); border-radius: 6px;">メール: contact@meta-labo.com</p>
+    `;
 }

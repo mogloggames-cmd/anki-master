@@ -1,6 +1,6 @@
 <?php
 /**
- * 暗記マスター クラウド同期API
+ * もぐら先生の暗記サポートアプリ - クラウド同期API
  *
  * エックスサーバーに設置して使用します。
  *
@@ -18,8 +18,18 @@ define('SYNC_PASSWORD', 'ここにパスワードを設定してください');
 define('DATA_DIR', __DIR__ . '/data');
 // ==================
 
-// CORS（アプリからのアクセスを許可）
-header('Access-Control-Allow-Origin: *');
+// CORS — 許可するオリジンを制限
+$allowedOrigins = [
+    'https://meta-labo.com',
+    'http://localhost',
+    'http://127.0.0.1',
+];
+$origin = $_SERVER['HTTP_ORIGIN'] ?? '';
+if (in_array($origin, $allowedOrigins, true) || preg_match('#^https?://(localhost|127\.0\.0\.1)(:\d+)?$#', $origin)) {
+    header('Access-Control-Allow-Origin: ' . $origin);
+} else {
+    header('Access-Control-Allow-Origin: https://meta-labo.com');
+}
 header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
 header('Access-Control-Allow-Headers: Content-Type, X-Sync-Key');
 header('Content-Type: application/json; charset=utf-8');

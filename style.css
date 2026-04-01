@@ -2416,3 +2416,46 @@ button {
 .auth-switch a:hover {
     text-decoration: underline;
 }
+
+.auth-legal-links {
+    text-align: center;
+    margin-top: 16px;
+    font-size: 0.75rem;
+    color: var(--text-light);
+}
+
+.auth-legal-links a {
+    color: var(--text-light);
+    text-decoration: none;
+}
+
+.auth-legal-links a:hover {
+    text-decoration: underline;
+}
+
+/* 法的ページモーダル */
+#legal-modal-body h3 {
+    font-size: 1rem;
+    color: var(--primary);
+    margin: 20px 0 8px;
+}
+
+#legal-modal-body h4 {
+    font-size: 0.9rem;
+    color: var(--secondary);
+    margin: 12px 0 6px;
+}
+
+#legal-modal-body p,
+#legal-modal-body li {
+    font-size: 0.85rem;
+    line-height: 1.7;
+    color: var(--text-dark);
+    margin-bottom: 8px;
+}
+
+#legal-modal-body ul,
+#legal-modal-body ol {
+    padding-left: 20px;
+    margin-bottom: 12px;
+}

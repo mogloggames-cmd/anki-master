@@ -1,10 +1,10 @@
-const CACHE_NAME = 'anki-master-v4';
+const CACHE_NAME = 'mogura-sensei-v1';
 const PRECACHE_ASSETS = [
   './index.html',
   './script.js',
   './style.css',
   './manifest.json',
-  './tax_tutor_icon.png'
+  './mogura_sensei_icon.png'
 ];
 
 // Install: pre-cache core assets
@@ -31,14 +31,20 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
-// Fetch: cache-first, fall back to network, cache new successful responses
+// Fetch: network-first, fall back to cache for offline support
+// API requests are never cached
 self.addEventListener('fetch', (event) => {
+  const url = new URL(event.request.url);
+
+  // API requests — always network, never cache
+  if (url.pathname.includes('api.php') || url.pathname.includes('sync_api.php')) {
+    event.respondWith(fetch(event.request));
+    return;
+  }
+
   event.respondWith(
-    caches.match(event.request).then((cachedResponse) => {
-      if (cachedResponse) {
-        return cachedResponse;
-      }
-      return fetch(event.request).then((networkResponse) => {
+    fetch(event.request)
+      .then((networkResponse) => {
         if (networkResponse && networkResponse.status === 200 && networkResponse.type === 'basic') {
           const responseToCache = networkResponse.clone();
           caches.open(CACHE_NAME).then((cache) => {
@@ -46,7 +52,9 @@ self.addEventListener('fetch', (event) => {
           });
         }
         return networkResponse;
-      });
-    })
+      })
+      .catch(() => {
+        return caches.match(event.request);
+      })
   );
 });
