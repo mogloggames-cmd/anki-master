@@ -378,6 +378,7 @@ button {
 .eval-pill.pill-c { background: var(--eval-c); }
 .eval-pill.pill-b { background: var(--eval-b); }
 .eval-pill.pill-a { background: var(--eval-a); }
+.eval-pill.pill-s { background: var(--eval-s); }
 .eval-pill.pill-unlearned { background: #95a5a6; }
 
 /* 7日間カレンダーストリップ */
@@ -721,11 +722,11 @@ button {
 
 .eval-btn {
     flex: 1;
-    min-width: 50px;
-    padding: 12px 6px;
+    min-width: 40px;
+    padding: 12px 4px;
     border: none;
     border-radius: var(--radius-sm);
-    font-size: 0.9rem;
+    font-size: 0.75rem;
     font-weight: 700;
     cursor: pointer;
     transition: all var(--transition-fast);
@@ -2458,4 +2459,101 @@ button {
 #legal-modal-body ol {
     padding-left: 20px;
     margin-bottom: 12px;
+}
+
+/* ========================================
+   コーチング（もぐら先生の声かけ）
+======================================== */
+.coach-bubble {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 14px 16px;
+    margin: 12px 0;
+    background: var(--card-bg, white);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-sm);
+    border-left: 4px solid var(--primary);
+    animation: fadeIn 0.3s ease;
+}
+
+.coach-avatar {
+    font-size: 1.8rem;
+    flex-shrink: 0;
+    line-height: 1;
+}
+
+.coach-message {
+    font-size: 0.9rem;
+    line-height: 1.6;
+    color: var(--text-dark);
+}
+
+.coach-message strong {
+    color: var(--primary);
+}
+
+/* 復帰モーダル */
+.coach-comeback-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    animation: fadeIn 0.2s ease;
+    backdrop-filter: blur(4px);
+}
+
+.coach-comeback-card {
+    background: var(--card-bg, white);
+    border-radius: var(--radius-lg);
+    padding: 32px 24px;
+    text-align: center;
+    max-width: 320px;
+    width: 90%;
+    box-shadow: var(--shadow-lg);
+    animation: celebrationPop 0.5s ease;
+}
+
+.coach-comeback-avatar {
+    font-size: 3.5rem;
+    margin-bottom: 12px;
+    animation: gentleFloat 3s ease-in-out infinite;
+}
+
+.coach-comeback-title {
+    font-size: 1.3rem;
+    font-weight: 700;
+    color: var(--primary);
+    margin-bottom: 8px;
+}
+
+.coach-comeback-message {
+    font-size: 0.95rem;
+    color: var(--text-light);
+    line-height: 1.6;
+    margin-bottom: 20px;
+}
+
+.coach-comeback-btn {
+    background: var(--primary);
+    color: white;
+    border: none;
+    border-radius: var(--radius-sm);
+    padding: 12px 32px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.coach-comeback-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-sm);
+}
+
+.coach-comeback-btn:active {
+    transform: scale(0.97);
 }

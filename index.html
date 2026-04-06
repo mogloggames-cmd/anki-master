@@ -8,7 +8,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="もぐら先生の暗記サポート">
     <meta name="application-name" content="もぐら先生の暗記サポート">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://meta-labo.com; font-src 'self';">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://mogura-app.com; font-src 'self';">
     <title>もぐら先生の暗記サポートアプリ</title>
     <link rel="manifest" href="manifest.json">
     <link rel="apple-touch-icon" href="mogura_sensei_icon.png">
@@ -127,6 +127,7 @@
                 <div class="dashboard-eval-breakdown" id="dashboard-eval-breakdown"></div>
                 <div class="subject-chips" id="subject-chips"></div>
                 <div class="calendar-strip" id="calendar-strip"></div>
+                <div id="coach-dashboard-bubble"></div>
             </div>
 
             <div class="review-progress">
@@ -303,7 +304,7 @@
                         <label>評価モード</label>
                         <div class="btn-row">
                             <button id="eval-mode-simple-btn" class="btn btn-small btn-primary">正誤</button>
-                            <button id="eval-mode-detail-btn" class="btn btn-small btn-secondary">A~E</button>
+                            <button id="eval-mode-detail-btn" class="btn btn-small btn-secondary">詳細</button>
                         </div>
                     </div>
                     <div class="settings-group">
@@ -477,25 +478,28 @@
                             <strong style="display: block; margin-bottom: 8px; font-size: 0.85rem;">エクスポートする評価:</strong>
                             <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
                                 <label style="display: flex; align-items: center; gap: 4px; cursor: pointer;">
-                                    <input type="checkbox" class="export-eval-filter" value="E" checked> <span class="eval-badge eval-e" style="font-size: 0.75rem;">E</span>
+                                    <input type="checkbox" class="export-eval-filter" value="E" checked> <span class="eval-badge eval-e" style="font-size: 0.75rem;">翌日</span>
                                 </label>
                                 <label style="display: flex; align-items: center; gap: 4px; cursor: pointer;">
-                                    <input type="checkbox" class="export-eval-filter" value="D" checked> <span class="eval-badge eval-d" style="font-size: 0.75rem;">D</span>
+                                    <input type="checkbox" class="export-eval-filter" value="D" checked> <span class="eval-badge eval-d" style="font-size: 0.75rem;">3日後</span>
                                 </label>
                                 <label style="display: flex; align-items: center; gap: 4px; cursor: pointer;">
-                                    <input type="checkbox" class="export-eval-filter" value="C" checked> <span class="eval-badge eval-c" style="font-size: 0.75rem;">C</span>
+                                    <input type="checkbox" class="export-eval-filter" value="C" checked> <span class="eval-badge eval-c" style="font-size: 0.75rem;">7日後</span>
                                 </label>
                                 <label style="display: flex; align-items: center; gap: 4px; cursor: pointer;">
-                                    <input type="checkbox" class="export-eval-filter" value="B" checked> <span class="eval-badge eval-b" style="font-size: 0.75rem;">B</span>
+                                    <input type="checkbox" class="export-eval-filter" value="B" checked> <span class="eval-badge eval-b" style="font-size: 0.75rem;">14日後</span>
                                 </label>
                                 <label style="display: flex; align-items: center; gap: 4px; cursor: pointer;">
-                                    <input type="checkbox" class="export-eval-filter" value="A" checked> <span class="eval-badge eval-a" style="font-size: 0.75rem;">A</span>
+                                    <input type="checkbox" class="export-eval-filter" value="A" checked> <span class="eval-badge eval-a" style="font-size: 0.75rem;">30日後</span>
+                                </label>
+                                <label style="display: flex; align-items: center; gap: 4px; cursor: pointer;">
+                                    <input type="checkbox" class="export-eval-filter" value="S" checked> <span class="eval-badge eval-s" style="font-size: 0.75rem;">完全習得</span>
                                 </label>
                             </div>
                             <div style="display: flex; gap: 6px; flex-wrap: wrap;">
-                                <button class="btn btn-small btn-secondary" data-export-filter="E">Eのみ</button>
-                                <button class="btn btn-small btn-secondary" data-export-filter="E,D">E・D</button>
-                                <button class="btn btn-small btn-secondary" data-export-filter="E,D,C,B,A">すべて</button>
+                                <button class="btn btn-small btn-secondary" data-export-filter="E">翌日のみ</button>
+                                <button class="btn btn-small btn-secondary" data-export-filter="E,D">翌日・3日後</button>
+                                <button class="btn btn-small btn-secondary" data-export-filter="E,D,C,B,A,S">すべて</button>
                             </div>
                             <div id="export-filter-count" style="margin-top: 8px; font-size: 0.85rem; color: var(--text-light);"></div>
                         </div>

@@ -7,11 +7,17 @@ let theoryData = {
 };
 
 const REVIEW_INTERVALS = {
+    'S': null, // 完全習得 — 復習不要
     'A': 30,
     'B': 14,
     'C': 7,
     'D': 3,
     'E': 1
+};
+
+const EVAL_LABELS = {
+    'S': '完全習得', 'A': '30日後', 'B': '14日後',
+    'C': '7日後', 'D': '3日後', 'E': '翌日'
 };
 
 let currentCardIndex = 0;
@@ -243,7 +249,7 @@ function registerServiceWorker() {
 // アカウント認証 & クラウド同期
 // ========================================
 
-const API_BASE_URL = 'https://meta-labo.com/anki-sync/api.php';
+const API_BASE_URL = 'https://mogura-app.com/anki-sync/api.php';
 
 let authToken = localStorage.getItem('authToken');
 let authEmail = localStorage.getItem('authEmail');
@@ -298,6 +304,7 @@ function initApp() {
     initIncorrectModeButtons();
     initDailyGoal();
     updateAccountInfo();
+    checkComebackCoaching();
 }
 
 function showApp() {
@@ -988,11 +995,12 @@ function handleKeyboardShortcut(e) {
                 undoLastEvaluation();
             }
             break;
-        case '1': case '2': case '3': case '4': case '5':
+        case '1': case '2': case '3': case '4': case '5': case '6':
             if (isReviewTab && evalMode === 'detail' && currentReviewList.length > 0) {
                 e.preventDefault();
-                const evals = ['E', 'D', 'C', 'B', 'A'];
-                recordEvaluation(currentReviewList[currentCardIndex], evals[parseInt(e.key) - 1]);
+                const evals = ['E', 'D', 'C', 'B', 'A', 'S'];
+                const idx = parseInt(e.key) - 1;
+                if (idx < evals.length) recordEvaluation(currentReviewList[currentCardIndex], evals[idx]);
             }
             break;
     }
@@ -1033,7 +1041,7 @@ function toggleShortcutHelp() {
                 <div class="shortcut-item"><kbd>O</kbd><span>正解</span></div>
                 <div class="shortcut-item"><kbd>X</kbd><span>不正解</span></div>
                 <div class="shortcut-item"><kbd>Z</kbd><span>元に戻す</span></div>
-                <div class="shortcut-item"><kbd>1-5</kbd><span>評価 E〜A（詳細モード時）</span></div>
+                <div class="shortcut-item"><kbd>1-6</kbd><span>評価 翌日〜完全習得（詳細モード時）</span></div>
                 <div class="shortcut-item"><kbd>?</kbd><span>このヘルプを表示</span></div>
                 <div class="shortcut-item"><kbd>Esc</kbd><span>閉じる</span></div>
             </div>
@@ -1153,17 +1161,19 @@ function updateDashboard(learnedCount, unlearnedCount, learnedReviewList) {
     // 評価内訳バッジ
     const breakdown = document.getElementById('dashboard-eval-breakdown');
     if (breakdown) {
+        const sCount = learnedReviewList.filter(t => t.evaluation === 'S').length;
         const eCount = learnedReviewList.filter(t => t.evaluation === 'E').length;
         const dCount = learnedReviewList.filter(t => t.evaluation === 'D').length;
         const cCount = learnedReviewList.filter(t => t.evaluation === 'C').length;
         const bCount = learnedReviewList.filter(t => t.evaluation === 'B').length;
         const aCount = learnedReviewList.filter(t => t.evaluation === 'A').length;
         let pills = '';
-        if (eCount) pills += `<span class="eval-pill pill-e">E: ${eCount}</span>`;
-        if (dCount) pills += `<span class="eval-pill pill-d">D: ${dCount}</span>`;
-        if (cCount) pills += `<span class="eval-pill pill-c">C: ${cCount}</span>`;
-        if (bCount) pills += `<span class="eval-pill pill-b">B: ${bCount}</span>`;
-        if (aCount) pills += `<span class="eval-pill pill-a">A: ${aCount}</span>`;
+        if (eCount) pills += `<span class="eval-pill pill-e">翌日: ${eCount}</span>`;
+        if (dCount) pills += `<span class="eval-pill pill-d">3日後: ${dCount}</span>`;
+        if (cCount) pills += `<span class="eval-pill pill-c">7日後: ${cCount}</span>`;
+        if (bCount) pills += `<span class="eval-pill pill-b">14日後: ${bCount}</span>`;
+        if (aCount) pills += `<span class="eval-pill pill-a">30日後: ${aCount}</span>`;
+        if (sCount) pills += `<span class="eval-pill pill-s">習得: ${sCount}</span>`;
         if (unlearnedCount) pills += `<span class="eval-pill pill-unlearned">未習: ${unlearnedCount}</span>`;
         breakdown.innerHTML = pills;
     }
@@ -1173,6 +1183,12 @@ function updateDashboard(learnedCount, unlearnedCount, learnedReviewList) {
 
     // 7日間カレンダーストリップ
     updateCalendarStrip();
+
+    // もぐら先生の声かけ
+    const coachContainer = document.getElementById('coach-dashboard-bubble');
+    if (coachContainer) {
+        coachContainer.innerHTML = generateReviewStartCoaching(learnedReviewList, unlearnedCount);
+    }
 }
 
 function updateSubjectChips() {
@@ -1185,7 +1201,7 @@ function updateSubjectChips() {
     let html = '';
     theoryData.subjects.forEach(subject => {
         const cls = subject.active === false ? 'subject-chip inactive' : 'subject-chip';
-        html += `<span class="${cls}" onclick="toggleSubjectActive('${subject.name}')">${subject.name}</span>`;
+        html += `<span class="${cls}" onclick="toggleSubjectActive('${escapeHTML(subject.name)}')">${escapeHTML(subject.name)}</span>`;
     });
     container.innerHTML = html;
 }
@@ -1299,14 +1315,14 @@ function getUnlearnedList() {
 }
 
 function calculatePriority(evaluation, daysOverdue) {
-    const evalWeights = { 'E': 120, 'D': 100, 'C': 80, 'B': 60, 'A': 40 };
+    const evalWeights = { 'E': 120, 'D': 100, 'C': 80, 'B': 60, 'A': 40, 'S': 20 };
     return (evalWeights[evaluation] || 0) + (daysOverdue * 10);
 }
 
 function applySortMode(list, mode) {
     switch (mode) {
         case 'evaluation':
-            const evalOrder = { 'E': 0, 'D': 1, 'C': 2, 'B': 3, 'A': 4 };
+            const evalOrder = { 'E': 0, 'D': 1, 'C': 2, 'B': 3, 'A': 4, 'S': 5 };
             return list.sort((a, b) => {
                 const diff = (evalOrder[a.evaluation] || 0) - (evalOrder[b.evaluation] || 0);
                 return diff !== 0 ? diff : (b.priority || 0) - (a.priority || 0);
@@ -1376,6 +1392,7 @@ function displayCurrentCard(containerId = 'today-review-content') {
 }
 
 function showCompletionCelebration(container) {
+    const coachMsg = generateCompletionCoaching();
     container.innerHTML = `
         <div class="celebration">
             <div class="celebration-emoji">🎉</div>
@@ -1385,6 +1402,7 @@ function showCompletionCelebration(container) {
                 <span class="eval-pill pill-a">完了: ${completedTodayCount}問</span>
             </div>
         </div>
+        ${coachMsg}
     `;
 }
 
@@ -1409,7 +1427,7 @@ function createTheoryCard(theory, showEvalButtons = false) {
             </div>
             <div class="card-info">
                 <div class="current-eval">
-                    現在：<span class="eval-badge eval-${theory.evaluation.toLowerCase()}">${theory.evaluation}</span>
+                    現在：<span class="eval-badge eval-${theory.evaluation.toLowerCase()}">${EVAL_LABELS[theory.evaluation] || theory.evaluation}</span>
                     <span style="color: var(--text-light); font-size: 0.8rem;">
                         ${theory.nextReview ? '次回: ' + formatDateShort(theory.nextReview) : '未スケジュール'}
                     </span>
@@ -1432,11 +1450,12 @@ function createTheoryCard(theory, showEvalButtons = false) {
         } else {
             html += `
             <div class="eval-buttons${compact}" style="display: flex; gap: ${isLarge ? '8px' : '6px'};">
-                <button class="eval-btn eval-btn-a${sz}" style="flex: 1;" data-eval="A">A</button>
-                <button class="eval-btn eval-btn-b${sz}" style="flex: 1;" data-eval="B">B</button>
-                <button class="eval-btn eval-btn-c${sz}" style="flex: 1;" data-eval="C">C</button>
-                <button class="eval-btn eval-btn-d${sz}" style="flex: 1;" data-eval="D">D</button>
-                <button class="eval-btn eval-btn-e${sz}" style="flex: 1;" data-eval="E">E</button>
+                <button class="eval-btn eval-btn-s${sz}" style="flex: 1;" data-eval="S">${isLarge ? '完全習得' : '習得'}</button>
+                <button class="eval-btn eval-btn-a${sz}" style="flex: 1;" data-eval="A">30日後</button>
+                <button class="eval-btn eval-btn-b${sz}" style="flex: 1;" data-eval="B">14日後</button>
+                <button class="eval-btn eval-btn-c${sz}" style="flex: 1;" data-eval="C">7日後</button>
+                <button class="eval-btn eval-btn-d${sz}" style="flex: 1;" data-eval="D">3日後</button>
+                <button class="eval-btn eval-btn-e${sz}" style="flex: 1;" data-eval="E">翌日</button>
             </div>`;
         }
     }
@@ -1501,14 +1520,14 @@ function attachCardTapToggle(containerId) {
 }
 
 function upgradeEvaluation(current) {
-    const levels = ['E', 'D', 'C', 'B', 'A'];
+    const levels = ['E', 'D', 'C', 'B', 'A', 'S'];
     const index = levels.indexOf(current);
     if (index === -1 || index === levels.length - 1) return current;
     return levels[index + 1];
 }
 
 function downgradeEvaluation(current) {
-    const levels = ['E', 'D', 'C', 'B', 'A'];
+    const levels = ['E', 'D', 'C', 'B', 'A', 'S'];
     const index = levels.indexOf(current);
     if (index === -1 || index === 0) return current;
     return levels[index - 1];
@@ -1528,9 +1547,9 @@ function recordEvaluation(theory, evaluation, gentleMode = false) {
         cardIndex: currentCardIndex
     };
 
-    // 不正解トラッキング
-    const evalOrder = ['E', 'D', 'C', 'B', 'A'];
-    if (currentDisplayMode === 'today-review' && evalOrder.indexOf(evaluation) <= evalOrder.indexOf(prevEval)) {
+    // 不正解トラッキング（gentleモードで評価維持の場合は除外）
+    const evalOrder = ['E', 'D', 'C', 'B', 'A', 'S'];
+    if (currentDisplayMode === 'today-review' && !gentleMode && evalOrder.indexOf(evaluation) < evalOrder.indexOf(prevEval)) {
         if (!todayIncorrectList.find(t => t.theoryId === theory.id)) {
             todayIncorrectList.push({
                 theoryId: theory.id,
@@ -1547,6 +1566,8 @@ function recordEvaluation(theory, evaluation, gentleMode = false) {
     originalTheory.evaluation = evaluation;
     if (gentleMode) {
         originalTheory.nextReview = addDays(today, 1);
+    } else if (evaluation === 'S') {
+        originalTheory.nextReview = null; // 完全習得 — 復習不要
     } else {
         originalTheory.nextReview = addDays(today, REVIEW_INTERVALS[evaluation]);
     }
@@ -1617,6 +1638,10 @@ function undoLastEvaluation() {
     theory.evaluation = lastEvalAction.prevEval;
     theory.nextReview = lastEvalAction.prevNextReview;
     theory.learned = lastEvalAction.prevLearned;
+
+    // 不正解リストから削除
+    const incorrectIdx = todayIncorrectList.findIndex(t => t.theoryId === lastEvalAction.theoryId);
+    if (incorrectIdx !== -1) todayIncorrectList.splice(incorrectIdx, 1);
 
     // 完了カウント戻す
     if (completedTodayCount > 0) {
@@ -1699,7 +1724,7 @@ function updateAllTheoriesList() {
 
     const unlearnedTheories = theories.filter(t => !t.learned);
     const learnedTheories = theories.filter(t => t.learned);
-    const grouped = { 'E': [], 'D': [], 'C': [], 'B': [], 'A': [] };
+    const grouped = { 'E': [], 'D': [], 'C': [], 'B': [], 'A': [], 'S': [] };
     learnedTheories.forEach(t => { if (grouped[t.evaluation]) grouped[t.evaluation].push(t); });
 
     let html = '';
@@ -1710,10 +1735,11 @@ function updateAllTheoriesList() {
         html += '</div>';
     }
 
-    const emojis = { 'E': '🔴', 'D': '🟠', 'C': '🟡', 'B': '🟢', 'A': '🔵' };
-    ['E', 'D', 'C', 'B', 'A'].forEach(grade => {
+    const emojis = { 'E': '🔴', 'D': '🟠', 'C': '🟡', 'B': '🟢', 'A': '🔵', 'S': '⭐' };
+    const gradeLabels = { 'E': '翌日', 'D': '3日後', 'C': '7日後', 'B': '14日後', 'A': '30日後', 'S': '完全習得' };
+    ['E', 'D', 'C', 'B', 'A', 'S'].forEach(grade => {
         if (grouped[grade].length > 0) {
-            html += `<h3 style="margin: 24px 0 12px; color: var(--eval-${grade.toLowerCase()});">${emojis[grade]} ${grade}評価（${grouped[grade].length}問）</h3><div class="theory-list">`;
+            html += `<h3 style="margin: 24px 0 12px; color: var(--eval-${grade.toLowerCase()});">${emojis[grade]} ${gradeLabels[grade]}（${grouped[grade].length}問）</h3><div class="theory-list">`;
             grouped[grade].forEach(t => html += renderTheoryItem(t));
             html += '</div>';
         }
@@ -2166,9 +2192,9 @@ function updateStructureList() {
             const activeLabel = subject.active === false ? ' <small style="color:#95a5a6;">(休止中)</small>' : '';
             html += `
                 <div class="structure-item" style="padding: 15px; margin-bottom: 10px; background: var(--bg-surface); border-radius: var(--radius-sm); display: flex; justify-content: space-between; align-items: center;">
-                    <div onclick="navigateToSubject('${subject.name}')" style="flex: 1; cursor: pointer; display: flex; align-items: center; gap: 10px;">
+                    <div onclick="navigateToSubject('${escapeHTML(subject.name)}')" style="flex: 1; cursor: pointer; display: flex; align-items: center; gap: 10px;">
                         <span style="font-size: 1.3rem;">📚</span>
-                        <span style="font-weight: 600;">${subject.name}${activeLabel}</span>
+                        <span style="font-weight: 600;">${escapeHTML(subject.name)}${activeLabel}</span>
                         <span style="color: var(--text-light); font-size: 0.85rem;">${count}問</span>
                     </div>
                     <button class="btn btn-warning btn-small" onclick="openStructureEditModal('subject', ${i})">✏️</button>
@@ -2179,16 +2205,16 @@ function updateStructureList() {
         const subjectName = currentStructurePath[0];
         const subject = theoryData.subjects.find(s => s.name === subjectName);
         if (!subject) return;
-        breadcrumb.innerHTML = `<a href="#" onclick="navigateToTop(); return false;" style="color: var(--accent);">トップ</a> / ${subjectName}`;
+        breadcrumb.innerHTML = `<a href="#" onclick="navigateToTop(); return false;" style="color: var(--accent);">トップ</a> / ${escapeHTML(subjectName)}`;
         let html = '<div style="margin-bottom: 16px;"><button class="btn btn-secondary btn-small" onclick="navigateToTop()">⬅️ 戻る</button></div>';
         const si = theoryData.subjects.findIndex(s => s.name === subjectName);
         subject.books.forEach((book, bi) => {
             const count = book.chapters.reduce((s, c) => s + c.theories.length, 0);
             html += `
                 <div class="structure-item" style="padding: 15px; margin-bottom: 10px; background: var(--bg-surface); border-radius: var(--radius-sm); display: flex; justify-content: space-between; align-items: center;">
-                    <div onclick="navigateToBook('${book.name}')" style="flex: 1; cursor: pointer; display: flex; align-items: center; gap: 10px;">
+                    <div onclick="navigateToBook('${escapeHTML(book.name)}')" style="flex: 1; cursor: pointer; display: flex; align-items: center; gap: 10px;">
                         <span style="font-size: 1.3rem;">📖</span>
-                        <span style="font-weight: 600;">${book.name}</span>
+                        <span style="font-weight: 600;">${escapeHTML(book.name)}</span>
                         <span style="color: var(--text-light); font-size: 0.85rem;">${count}問</span>
                     </div>
                     <button class="btn btn-warning btn-small" onclick="openStructureEditModal('book', ${bi}, ${si})">✏️</button>
@@ -2201,16 +2227,16 @@ function updateStructureList() {
         if (!subject) return;
         const book = subject.books.find(b => b.name === bookName);
         if (!book) return;
-        breadcrumb.innerHTML = `<a href="#" onclick="navigateToTop(); return false;" style="color: var(--accent);">トップ</a> / <a href="#" onclick="navigateToSubject('${subjectName}'); return false;" style="color: var(--accent);">${subjectName}</a> / ${bookName}`;
+        breadcrumb.innerHTML = `<a href="#" onclick="navigateToTop(); return false;" style="color: var(--accent);">トップ</a> / <a href="#" onclick="navigateToSubject('${escapeHTML(subjectName)}'); return false;" style="color: var(--accent);">${escapeHTML(subjectName)}</a> / ${escapeHTML(bookName)}`;
         let html = '<div style="margin-bottom: 16px;"><button class="btn btn-secondary btn-small" onclick="navigateBack()">⬅️ 戻る</button></div>';
         const si = theoryData.subjects.findIndex(s => s.name === subjectName);
         const bi = subject.books.findIndex(b => b.name === bookName);
         book.chapters.forEach((chapter, ci) => {
             html += `
                 <div class="structure-item" style="padding: 15px; margin-bottom: 10px; background: var(--bg-surface); border-radius: var(--radius-sm); display: flex; justify-content: space-between; align-items: center;">
-                    <div onclick="navigateToChapter('${chapter.name}')" style="flex: 1; cursor: pointer; display: flex; align-items: center; gap: 10px;">
+                    <div onclick="navigateToChapter('${escapeHTML(chapter.name)}')" style="flex: 1; cursor: pointer; display: flex; align-items: center; gap: 10px;">
                         <span style="font-size: 1.3rem;">📑</span>
-                        <span style="font-weight: 600;">${chapter.name}</span>
+                        <span style="font-weight: 600;">${escapeHTML(chapter.name)}</span>
                         <span style="color: var(--text-light); font-size: 0.85rem;">${chapter.theories.length}問</span>
                     </div>
                     <button class="btn btn-warning btn-small" onclick="openStructureEditModal('chapter', ${ci}, ${bi}, ${si})">✏️</button>
@@ -2225,10 +2251,10 @@ function updateStructureList() {
         if (!book) return;
         const chapter = book.chapters.find(c => c.name === chapterName);
         if (!chapter) return;
-        breadcrumb.innerHTML = `<a href="#" onclick="navigateToTop(); return false;" style="color: var(--accent);">トップ</a> / <a href="#" onclick="navigateToSubject('${subjectName}'); return false;" style="color: var(--accent);">${subjectName}</a> / <a href="#" onclick="navigateToBook('${bookName}'); return false;" style="color: var(--accent);">${bookName}</a> / ${chapterName}`;
+        breadcrumb.innerHTML = `<a href="#" onclick="navigateToTop(); return false;" style="color: var(--accent);">トップ</a> / <a href="#" onclick="navigateToSubject('${escapeHTML(subjectName)}'); return false;" style="color: var(--accent);">${escapeHTML(subjectName)}</a> / <a href="#" onclick="navigateToBook('${escapeHTML(bookName)}'); return false;" style="color: var(--accent);">${escapeHTML(bookName)}</a> / ${escapeHTML(chapterName)}`;
         let html = '<div style="margin-bottom: 16px;"><button class="btn btn-secondary btn-small" onclick="navigateBack()">⬅️ 戻る</button></div>';
         chapter.theories.forEach((theory, index) => {
-            const preview = theory.questionText.substring(0, 50) + (theory.questionText.length > 50 ? '...' : '');
+            const preview = escapeHTML(theory.questionText.substring(0, 50) + (theory.questionText.length > 50 ? '...' : ''));
             html += `
                 <div class="structure-item" style="padding: 15px; margin-bottom: 10px; background: white; border: 1px solid var(--border-color); border-radius: var(--radius-sm);">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
@@ -2236,7 +2262,7 @@ function updateStructureList() {
                             <div style="font-weight: 600; color: var(--primary); font-size: 0.85rem;">問題 ${index + 1}</div>
                             <div style="color: var(--text-light); font-size: 0.85rem; line-height: 1.4;">${preview}</div>
                         </div>
-                        <span class="eval-badge eval-${theory.evaluation.toLowerCase()}">${theory.evaluation}</span>
+                        <span class="eval-badge eval-${theory.evaluation.toLowerCase()}">${EVAL_LABELS[theory.evaluation] || theory.evaluation}</span>
                     </div>
                     <div style="display: flex; gap: 8px;">
                         <button class="btn btn-primary btn-small" style="flex: 1;" onclick="editTheoryFromStructure('${theory.id}')">✏️ 編集</button>
@@ -2267,7 +2293,7 @@ function openMoveModal(theoryId) {
     if (!theory) return;
     document.getElementById('move-theory-id').value = theoryId;
     const preview = theory.questionText.substring(0, 80) + (theory.questionText.length > 80 ? '...' : '');
-    document.getElementById('move-theory-preview').innerHTML = `<strong>移動する問題：</strong><br>${preview.replace(/\n/g, '<br>')}`;
+    document.getElementById('move-theory-preview').innerHTML = `<strong>移動する問題：</strong><br>${escapeHTML(preview).replace(/\n/g, '<br>')}`;
     const subjectSelect = document.getElementById('move-subject-select');
     subjectSelect.innerHTML = '<option value="">-- 科目を選択 --</option>';
     theoryData.subjects.forEach(s => { const o = document.createElement('option'); o.value = s.name; o.textContent = s.name; subjectSelect.appendChild(o); });
@@ -2899,11 +2925,12 @@ function renderEvalDistribution(theories) {
         C: 'var(--eval-c, #FF9800)', D: 'var(--eval-d, #f44336)', E: 'var(--eval-e, #9E9E9E)'
     };
 
+    const distLabels = { 'S': '習得', 'A': '30日後', 'B': '14日後', 'C': '7日後', 'D': '3日後', 'E': '翌日' };
     let html = '<div class="eval-dist-bars">';
     ['S', 'A', 'B', 'C', 'D', 'E'].forEach(eval_ => {
         const pct = Math.round((counts[eval_] / total) * 100);
         html += `<div class="eval-dist-row">
-            <span class="eval-dist-label">${eval_}</span>
+            <span class="eval-dist-label">${distLabels[eval_]}</span>
             <div class="eval-dist-bar-bg">
                 <div class="eval-dist-bar-fill" style="width: ${pct}%; background: ${colors[eval_]}"></div>
             </div>
@@ -2944,12 +2971,12 @@ function renderSubjectProgress() {
 
         html += `<div class="subject-progress-row">
             <div class="subject-progress-header">
-                <span class="subject-progress-name">${subject.name}</span>
+                <span class="subject-progress-name">${escapeHTML(subject.name)}</span>
                 <span class="subject-progress-detail">${mastered + learning}/${total}問 学習済み</span>
             </div>
             <div class="subject-progress-bar">
-                <div class="subject-progress-mastered" style="width: ${masteredPct}%" title="定着 (S/A): ${mastered}問"></div>
-                <div class="subject-progress-learning" style="width: ${learningPct}%" title="学習中 (B-E): ${learning}問"></div>
+                <div class="subject-progress-mastered" style="width: ${masteredPct}%" title="定着 (習得/30日後): ${mastered}問"></div>
+                <div class="subject-progress-learning" style="width: ${learningPct}%" title="学習中 (14日後〜翌日): ${learning}問"></div>
             </div>
             <div class="subject-progress-labels">
                 <span>定着 ${masteredPct}%</span>
@@ -3100,7 +3127,7 @@ function displayTestCard() {
             </div>
             <div class="card-info">
                 <div class="current-eval">
-                    現在：<span class="eval-badge eval-${theory.evaluation.toLowerCase()}">${theory.evaluation}</span>
+                    現在：<span class="eval-badge eval-${theory.evaluation.toLowerCase()}">${EVAL_LABELS[theory.evaluation] || theory.evaluation}</span>
                 </div>
             </div>
         </div>
@@ -3160,6 +3187,12 @@ function showTestResults() {
         </div>
     `;
 
+    // もぐら先生の分析コメント
+    html += generateTestResultCoaching(testResults, pct);
+
+    // テスト結果を保存（次回比較用）
+    localStorage.setItem('lastTestScore', JSON.stringify({ pct, date: getTodayString() }));
+
     // Eval breakdown bar chart
     const evalGroups = {};
     testResults.forEach(r => {
@@ -3174,6 +3207,7 @@ function showTestResults() {
         'C': 'var(--eval-c)', 'D': 'var(--eval-d)', 'E': 'var(--eval-e)'
     };
 
+    const testEvalLabels = { 'E': '翌日', 'D': '3日後', 'C': '7日後', 'B': '14日後', 'A': '30日後', 'S': '習得' };
     html += '<div class="test-result-section"><h3>評価別の正答率</h3>';
     ['E', 'D', 'C', 'B', 'A', 'S'].forEach(ev => {
         if (!evalGroups[ev]) return;
@@ -3181,7 +3215,7 @@ function showTestResults() {
         const evPct = Math.round((g.correct / g.total) * 100);
         html += `
             <div class="test-eval-bar-row">
-                <span class="test-eval-bar-label">${ev}</span>
+                <span class="test-eval-bar-label">${testEvalLabels[ev]}</span>
                 <div class="test-eval-bar-bg">
                     <div class="test-eval-bar-fill" style="width: ${evPct}%; background: ${evalColors[ev] || '#999'};"></div>
                 </div>
@@ -3227,7 +3261,7 @@ function showTestResults() {
                 <div class="test-incorrect-item" onclick="this.classList.toggle('expanded')">
                     <div class="incorrect-question">
                         <span>${t.questionText.substring(0, 50)}${t.questionText.length > 50 ? '...' : ''}</span>
-                        <span class="eval-badge eval-${t.evaluation.toLowerCase()}" style="flex-shrink: 0;">${t.evaluation}</span>
+                        <span class="eval-badge eval-${t.evaluation.toLowerCase()}" style="flex-shrink: 0;">${EVAL_LABELS[t.evaluation] || t.evaluation}</span>
                     </div>
                     <div class="incorrect-detail">
                         <div class="question-section" style="margin-bottom: 8px;">
@@ -3408,7 +3442,7 @@ function getPrivacyPolicyHTML() {
         <p>本アプリの利用に伴い、以下のデータが保存されます。</p>
         <ul>
             <li>登録した問題・解答のテキスト</li>
-            <li>学習評価（S/A/B/C/D/E）・復習日時</li>
+            <li>学習評価（完全習得/30日後/14日後/7日後/3日後/翌日）・復習日時</li>
             <li>学習履歴（日別の学習回数・正答率）</li>
         </ul>
 
@@ -3509,4 +3543,392 @@ function getTermsHTML() {
         <h3>第10条（お問い合わせ）</h3>
         <p style="padding: 10px; background: var(--bg-surface); border-radius: 6px;">メール: contact@meta-labo.com</p>
     `;
+}
+
+// ========================================
+// コーチング（もぐら先生の声かけ）
+// ========================================
+
+const COACH_AVATAR = '🐹';
+
+function renderCoachBubble(message) {
+    if (!message) return '';
+    return `
+        <div class="coach-bubble">
+            <span class="coach-avatar">${COACH_AVATAR}</span>
+            <div class="coach-message">${message}</div>
+        </div>
+    `;
+}
+
+// --- ヘルパー関数 ---
+
+function getStudyStreak(log, today) {
+    let streak = 0;
+    let checkDate = today;
+    // 今日の分はまだ記録されていない場合があるのでまず今日をチェック
+    if (log[checkDate] && log[checkDate].total > 0) {
+        streak = 1;
+        checkDate = addDays(checkDate, -1);
+    }
+    while (log[checkDate] && log[checkDate].total > 0) {
+        streak++;
+        checkDate = addDays(checkDate, -1);
+    }
+    return streak;
+}
+
+function getOverallMasteryRate() {
+    const theories = getAllTheories(false);
+    const learned = theories.filter(t => t.learned);
+    if (learned.length === 0) return 0;
+    const mastered = learned.filter(t => ['S', 'A', 'B'].includes(t.evaluation));
+    return Math.round((mastered.length / learned.length) * 100);
+}
+
+function getDaysSinceLastStudy() {
+    const log = getStudyLog();
+    const dates = Object.keys(log).filter(d => log[d].total > 0).sort();
+    if (dates.length === 0) return -1;
+    const lastDate = dates[dates.length - 1];
+    return daysBetween(lastDate, getTodayString());
+}
+
+function getWeakestSubject(list) {
+    const subjectCounts = {};
+    list.forEach(t => {
+        subjectCounts[t.subjectName] = (subjectCounts[t.subjectName] || 0) + 1;
+    });
+    const entries = Object.entries(subjectCounts);
+    if (entries.length === 0) return null;
+    return entries.sort((a, b) => b[1] - a[1])[0];
+}
+
+// --- 復習開始時 ---
+
+function generateReviewStartCoaching(learnedReviewList, unlearnedCount) {
+    const total = learnedReviewList.length;
+    if (total === 0 && completedTodayCount === 0) return '';
+
+    const log = getStudyLog();
+    const today = getTodayString();
+    const streak = getStudyStreak(log, today);
+    const topSubject = getWeakestSubject(learnedReviewList);
+    const urgentCount = learnedReviewList.filter(t => t.evaluation === 'E' || t.evaluation === 'D').length;
+
+    let message = '';
+
+    if (completedTodayCount > 0 && total > 0) {
+        message = `おかえり！もう<strong>${completedTodayCount}問</strong>終わってるね。残り<strong>${total}問</strong>、この調子！`;
+    } else if (total === 0 && completedTodayCount > 0) {
+        return '';
+    } else if (streak >= 3) {
+        message = `<strong>${streak}日連続</strong>で学習中！すごいペースだね。今日も<strong>${total}問</strong>いってみよう！`;
+    } else if (urgentCount > total / 2 && topSubject) {
+        message = `<strong>${escapeHTML(topSubject[0])}</strong>の復習が<strong>${urgentCount}問</strong>あるよ。ここを重点的にやると効果的！`;
+    } else if (total <= 10) {
+        message = `今日は<strong>${total}問</strong>だけ！サクッと終わらせちゃおう`;
+    } else if (total >= 20) {
+        message = `今日は<strong>${total}問</strong>あるけど、焦らなくて大丈夫。一問ずつ着実にいこう`;
+    } else if (topSubject) {
+        message = `今日の復習は<strong>${total}問</strong>。<strong>${escapeHTML(topSubject[0])}</strong>を中心にがんばろう！`;
+    } else {
+        message = `今日は<strong>${total}問</strong>の復習があるよ。がんばろう！`;
+    }
+
+    return renderCoachBubble(message);
+}
+
+// --- 復習完了時 ---
+
+function generateCompletionCoaching() {
+    const log = getStudyLog();
+    const today = getTodayString();
+    const streak = getStudyStreak(log, today);
+    const masteryRate = getOverallMasteryRate();
+    const count = completedTodayCount;
+
+    let lines = [];
+
+    if (count >= 20) {
+        lines.push(`<strong>${count}問</strong>もやり切るなんてすごい！この努力は必ず実を結ぶよ`);
+    } else {
+        lines.push(`今日は<strong>${count}問</strong>クリアしたね。よくがんばった！`);
+    }
+
+    if (masteryRate >= 70) {
+        lines.push(`全体の定着率は<strong>${masteryRate}%</strong>！着実に力がついてきてるね`);
+    } else if (masteryRate > 0 && masteryRate < 50) {
+        lines.push(`まだまだ伸びしろたっぷり！続けることが一番の近道だよ`);
+    }
+
+    if (streak >= 7) {
+        lines.push(`<strong>${streak}日連続</strong>の学習！もう立派な学習習慣だね`);
+    } else if (streak >= 3) {
+        lines.push(`<strong>${streak}日連続</strong>の学習、すばらしい！`);
+    }
+
+    return renderCoachBubble(lines.join('。'));
+}
+
+// --- テスト後 ---
+
+function generateTestResultCoaching(results, pct) {
+    const subjectStats = {};
+    results.forEach(r => {
+        const key = r.theory.subjectName;
+        if (!subjectStats[key]) subjectStats[key] = { correct: 0, total: 0 };
+        subjectStats[key].total++;
+        if (r.correct) subjectStats[key].correct++;
+    });
+
+    let weakest = null;
+    let weakestPct = 100;
+    Object.entries(subjectStats).forEach(([name, s]) => {
+        const p = Math.round((s.correct / s.total) * 100);
+        if (p < weakestPct) { weakestPct = p; weakest = name; }
+    });
+
+    const highEvalMiss = results.filter(r => !r.correct && ['A', 'S'].includes(r.theory.evaluation)).length;
+    const lowEvalResults = results.filter(r => ['E', 'D'].includes(r.theory.evaluation));
+    const lowEvalAllCorrect = lowEvalResults.length > 0 && lowEvalResults.every(r => r.correct);
+
+    const lastTest = JSON.parse(localStorage.getItem('lastTestScore') || 'null');
+
+    let message = '';
+    if (pct >= 80) {
+        message = `<strong>${pct}%</strong>！すばらしい結果だね。しっかり定着してるよ`;
+    } else if (pct >= 50) {
+        message = `<strong>${pct}%</strong>、がんばったね。`;
+        if (weakest && Object.keys(subjectStats).length > 1) {
+            message += `<strong>${escapeHTML(weakest)}</strong>をもう少し復習するとグッと伸びそう！`;
+        } else {
+            message += `もう少し復習を重ねるとグッと伸びそう！`;
+        }
+    } else {
+        message = `<strong>${pct}%</strong>か。でも大丈夫、間違えた問題を復習すれば次はもっとよくなるよ`;
+    }
+
+    if (lastTest && lastTest.pct !== undefined) {
+        if (pct > lastTest.pct) {
+            message += `（前回の${lastTest.pct}%からアップ！成長してるね）`;
+        } else if (pct < lastTest.pct - 5) {
+            message += `（前回より少し下がったけど、波があるのは自然なこと）`;
+        }
+    }
+
+    if (highEvalMiss >= 2) {
+        message += ' 定着してると思った問題にも穴がないか確認してみよう';
+    } else if (lowEvalAllCorrect) {
+        message += ' 苦手だった問題もバッチリ！復習の成果が出てるね';
+    }
+
+    return renderCoachBubble(message);
+}
+
+// --- 久しぶりの復帰 ---
+
+function generateComebackCoaching(daysAway) {
+    let reviewCount = 0;
+    try { reviewCount = getTodayReviewList(getTodayString()).length; } catch (e) { /* データ未ロード時 */ }
+    let title = 'おかえりなさい！';
+    let message = '';
+
+    if (daysAway >= 30) {
+        message = `久しぶり！${daysAway}日も経ってたんだね。でも大丈夫、ここからまたスタートしよう`;
+    } else if (daysAway >= 14) {
+        message = `${daysAway}日ぶりのおかえり！戻ってきてくれてうれしいな。少しずつ取り戻していこう`;
+    } else {
+        message = `おかえり！${daysAway}日ぶりだね。また一緒にがんばろう`;
+    }
+
+    if (reviewCount > 0) {
+        message += `。復習が<strong>${reviewCount}問</strong>たまってるけど、焦らなくてOK。今日できる分だけやろう`;
+    }
+
+    return { title, message };
+}
+
+function checkComebackCoaching() {
+    if (sessionStorage.getItem('comebackShown')) return;
+    const daysAway = getDaysSinceLastStudy();
+    if (daysAway >= 7) {
+        const coaching = generateComebackCoaching(daysAway);
+        showComebackModal(coaching);
+        sessionStorage.setItem('comebackShown', 'true');
+    }
+}
+
+function showComebackModal(coaching) {
+    const overlay = document.createElement('div');
+    overlay.className = 'coach-comeback-overlay';
+    overlay.id = 'coach-comeback-overlay';
+    overlay.innerHTML = `
+        <div class="coach-comeback-card">
+            <div class="coach-comeback-avatar">${COACH_AVATAR}</div>
+            <div class="coach-comeback-title">${coaching.title}</div>
+            <div class="coach-comeback-message">${coaching.message}</div>
+            <button class="coach-comeback-btn" onclick="dismissComebackModal()">はじめる</button>
+        </div>
+    `;
+    document.body.appendChild(overlay);
+}
+
+function dismissComebackModal() {
+    const overlay = document.getElementById('coach-comeback-overlay');
+    if (overlay) overlay.remove();
+}
+
+// ========================================
+// 教材ダウンロード（内部API）
+// ========================================
+// UIには露出しない。将来の教材配信基盤。
+//
+// 教材JSONフォーマット:
+// {
+//   "meta": { "id": "chem-1-01", "name": "中1化学変化", "version": 1, "author": "もぐら先生" },
+//   "subjects": [
+//     {
+//       "name": "中学理科",
+//       "books": [
+//         {
+//           "name": "中1 化学変化",
+//           "chapters": [
+//             {
+//               "name": "物質の分類",
+//               "theories": [
+//                 { "questionText": "...", "answerText": "..." }
+//               ]
+//             }
+//           ]
+//         }
+//       ]
+//     }
+//   ]
+// }
+//
+// 使い方:
+//   await downloadMaterial('https://example.com/materials/chem-1-01.json');
+//   await installBuiltinMaterial(materialObj);
+
+async function downloadMaterial(url) {
+    try {
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const material = await response.json();
+        return await installMaterial(material);
+    } catch (err) {
+        showToast('教材のダウンロードに失敗しました: ' + err.message, 'error');
+        return false;
+    }
+}
+
+function installBuiltinMaterial(material) {
+    return installMaterial(material);
+}
+
+function installMaterial(material) {
+    if (!material || !material.subjects || !Array.isArray(material.subjects)) {
+        showToast('教材データが不正です', 'error');
+        return false;
+    }
+
+    const meta = material.meta || {};
+    const materialId = meta.id || generateId();
+
+    // 既にインストール済みか確認
+    const installed = JSON.parse(localStorage.getItem('installedMaterials') || '[]');
+    if (installed.find(m => m.id === materialId)) {
+        showToast(`「${meta.name || '教材'}」は既にインストール済みです`, 'info');
+        return false;
+    }
+
+    let addedCount = 0;
+
+    material.subjects.forEach(matSubject => {
+        // 既存科目を検索、なければ作成
+        let subject = theoryData.subjects.find(s => s.name === matSubject.name);
+        if (!subject) {
+            subject = { id: generateId(), name: matSubject.name, active: true, books: [] };
+            theoryData.subjects.push(subject);
+        }
+
+        (matSubject.books || []).forEach(matBook => {
+            let book = subject.books.find(b => b.name === matBook.name);
+            if (!book) {
+                book = { id: generateId(), name: matBook.name, chapters: [] };
+                subject.books.push(book);
+            }
+
+            (matBook.chapters || []).forEach(matChapter => {
+                let chapter = book.chapters.find(c => c.name === matChapter.name);
+                if (!chapter) {
+                    chapter = { id: generateId(), name: matChapter.name, theories: [] };
+                    book.chapters.push(chapter);
+                }
+
+                (matChapter.theories || []).forEach(matTheory => {
+                    chapter.theories.push({
+                        id: generateId(),
+                        questionText: matTheory.questionText || '',
+                        answerText: matTheory.answerText || '',
+                        evaluation: 'E',
+                        nextReview: null,
+                        learned: false,
+                        materialId: materialId
+                    });
+                    addedCount++;
+                });
+            });
+        });
+    });
+
+    // インストール記録を保存
+    installed.push({
+        id: materialId,
+        name: meta.name || '不明な教材',
+        version: meta.version || 1,
+        author: meta.author || '',
+        installedAt: getTodayString(),
+        theoryCount: addedCount
+    });
+    localStorage.setItem('installedMaterials', JSON.stringify(installed));
+
+    saveData();
+    updateAllDisplays();
+    showToast(`「${meta.name || '教材'}」をインストールしました（${addedCount}問）`, 'success');
+    return true;
+}
+
+function getInstalledMaterials() {
+    return JSON.parse(localStorage.getItem('installedMaterials') || '[]');
+}
+
+function uninstallMaterial(materialId) {
+    // 該当教材の問題を全削除
+    let removedCount = 0;
+    theoryData.subjects.forEach(subject => {
+        subject.books.forEach(book => {
+            book.chapters.forEach(chapter => {
+                const before = chapter.theories.length;
+                chapter.theories = chapter.theories.filter(t => t.materialId !== materialId);
+                removedCount += before - chapter.theories.length;
+            });
+            // 空の章を削除
+            book.chapters = book.chapters.filter(c => c.theories.length > 0);
+        });
+        // 空の本を削除
+        subject.books = subject.books.filter(b => b.chapters.length > 0);
+    });
+    // 空の科目を削除
+    theoryData.subjects = theoryData.subjects.filter(s => s.books.length > 0);
+
+    // インストール記録を削除
+    const installed = getInstalledMaterials().filter(m => m.id !== materialId);
+    localStorage.setItem('installedMaterials', JSON.stringify(installed));
+
+    saveData();
+    updateAllDisplays();
+    showToast(`教材をアンインストールしました（${removedCount}問削除）`, 'success');
+    return true;
 }
