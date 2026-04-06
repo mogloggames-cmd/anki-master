@@ -445,6 +445,10 @@ async function handleLogout() {
         });
     } catch (e) { /* ignore */ }
 
+    forceLogout();
+}
+
+function forceLogout() {
     authToken = null;
     authEmail = null;
     localStorage.removeItem('authToken');
@@ -502,7 +506,7 @@ async function apiRequest(action, method, body) {
     if (resp.status === 401) {
         // session expired
         showToast('セッション切れ。再ログインしてください', 'warning');
-        handleLogout();
+        forceLogout();
         throw new Error('session_expired');
     }
     return resp;
