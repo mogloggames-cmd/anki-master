@@ -356,7 +356,16 @@ function validateToken($token) {
 }
 
 function getBearerToken() {
-    $header = $_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '';
+    // エックスサーバー等でAuthorizationヘッダーが届かない場合の複数フォールバック
+    $header = '';
+    if (!empty($_SERVER['HTTP_AUTHORIZATION'])) {
+        $header = $_SERVER['HTTP_AUTHORIZATION'];
+    } elseif (!empty($_SERVER['REDIRECT_HTTP_AUTHORIZATION'])) {
+        $header = $_SERVER['REDIRECT_HTTP_AUTHORIZATION'];
+    } elseif (function_exists('apache_request_headers')) {
+        $headers = apache_request_headers();
+        $header = $headers['Authorization'] ?? $headers['authorization'] ?? '';
+    }
     if (preg_match('/^Bearer\s+(.+)$/i', $header, $m)) {
         return $m[1];
     }
