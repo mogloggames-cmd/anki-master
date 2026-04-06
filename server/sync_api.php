@@ -20,7 +20,7 @@ define('DATA_DIR', __DIR__ . '/data');
 
 // CORS — 許可するオリジンを制限
 $allowedOrigins = [
-    'https://meta-labo.com',
+    'https://mogura-app.com',
     'http://localhost',
     'http://127.0.0.1',
 ];
@@ -28,7 +28,7 @@ $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
 if (in_array($origin, $allowedOrigins, true) || preg_match('#^https?://(localhost|127\.0\.0\.1)(:\d+)?$#', $origin)) {
     header('Access-Control-Allow-Origin: ' . $origin);
 } else {
-    header('Access-Control-Allow-Origin: https://meta-labo.com');
+    header('Access-Control-Allow-Origin: https://mogura-app.com');
 }
 header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
 header('Access-Control-Allow-Headers: Content-Type, X-Sync-Key');

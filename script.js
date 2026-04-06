@@ -3486,7 +3486,7 @@ function getPrivacyPolicyHTML() {
 
         <h3>9. お問い合わせ</h3>
         <p>プライバシーに関するお問い合わせは、以下までご連絡ください。</p>
-        <p style="padding: 10px; background: var(--bg-surface); border-radius: 6px;">メール: contact@meta-labo.com</p>
+        <p style="padding: 10px; background: var(--bg-surface); border-radius: 6px;">メール: contact@mogura-app.com</p>
     `;
 }
 
@@ -3545,7 +3545,7 @@ function getTermsHTML() {
         <p>本規約は日本法に準拠し、本アプリに関する紛争については、運営者の所在地を管轄する裁判所を第一審の専属的合意管轄裁判所とします。</p>
 
         <h3>第10条（お問い合わせ）</h3>
-        <p style="padding: 10px; background: var(--bg-surface); border-radius: 6px;">メール: contact@meta-labo.com</p>
+        <p style="padding: 10px; background: var(--bg-surface); border-radius: 6px;">メール: contact@mogura-app.com</p>
     `;
 }
 
